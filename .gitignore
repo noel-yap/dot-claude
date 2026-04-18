@@ -1,1 +1,14 @@
+# Claude Code
+backups/
+cache/
+history.jsonl
+ide/
+plugins/
+policy-limits.json
+projects/
+sessions/
+shell-snapshots/
+
+# IDEA
 .idea/
+
