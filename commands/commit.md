@@ -1,0 +1,42 @@
+---
+description: "Creates conventional commit with analysis"
+allowed-tools:
+  - "Bash(git add:*)"
+  - "Bash(git status:*)"
+  - "Bash(git commit:*)"
+  - "Bash(git diff:*)"
+  - "Bash(git log:*)"
+---
+# /commit Command
+
+Analyzes changes and creates a Conventional Commits message.
+
+## Context
+- Git status: !git status
+- Diff: !git diff HEAD
+- Branch: !git branch --show-current
+- Jira task (branch config): !git config branch.$(git branch --show-current).jira-task 2>/dev/null || true
+- Recent commits: !git log --oneline -5
+
+## Steps
+1. Analyze changes for type (feat, fix, docs, etc.).
+2. Determine the Jira ticket ID for the scope:
+   - Use the `jira-task` branch config value if set.
+   - Otherwise, extract the leading Jira ticket ID from the branch name (e.g. `JT-1234` from `JT-1234：some-feature`).
+   - If neither is found, derive the scope from the changed code (module/component).
+3. Generate 3 Conventional Commits candidates: `<type>(<scope>): <description>` (imperative mood, <72 chars).
+4. Pick best one with reasoning.
+5. Ask the user: "Why is this change being made?" and wait for their answer.
+6. Incorporate the user's rationale in the commit message body along with what has changed.
+7. Display:
+   - Files staged for commit (will be committed)
+   - Files with changes not staged (will NOT be committed)
+   - Untracked files (will NOT be committed)
+   - The full commit message (subject + body with rationale)
+   Then ask the user to confirm before proceeding.
+8. If confirmed, commit: `git commit -m "<message>"`
+
+## Constraints
+- Follow Conventional Commits: https://www.conventionalcommits.org
+- No Claude co-authorship footer.
+- Keep body optional/short if needed.
