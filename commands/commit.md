@@ -28,13 +28,14 @@ Analyzes changes and creates a Conventional Commits message.
 4. Pick best one with reasoning.
 5. Ask the user: "Why is this change being made?" and wait for their answer.
 6. Incorporate the user's rationale in the commit message body along with what has changed.
-7. Display:
+7. If this change affects UX (new behavior, changed prompts, different output), update `README.md` to reflect it and stage it with `git stage README.md`.
+8. Display:
    - Files staged for commit (will be committed)
    - Files with changes not staged (will NOT be committed)
    - Untracked files (will NOT be committed)
    - The full commit message (subject + body with rationale)
    Then ask the user to confirm before proceeding.
-8. If confirmed, commit: `git commit -m "<message>"`
+9. If confirmed, commit: `git commit -m "<message>"`
 
 ## Constraints
 - Follow Conventional Commits: https://www.conventionalcommits.org
