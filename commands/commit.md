@@ -11,6 +11,14 @@ allowed-tools:
 
 Analyzes changes and creates a Conventional Commits message.
 
+## Usage
+
+```
+/commit [file ...]
+```
+
+If files are specified, stage only those files with `git add <files>` before proceeding. If other modified or already-staged files are detected that logically belong with the specified files, ask the user before including them. Otherwise, use whatever is already staged.
+
 ## Context
 - Git status: !git status
 - Diff: !git diff HEAD
@@ -29,6 +37,7 @@ Analyzes changes and creates a Conventional Commits message.
 5. Ask the user: "Why is this change being made?" and wait for their answer.
 6. Incorporate the user's rationale in the commit message body along with what has changed.
 7. If this change affects UX (new behavior, changed prompts, different output), update `README.md` to reflect it and stage it with `git stage README.md`.
+   - If files were specified by the user and `README.md` is not among them, ask the user before staging it.
 8. Display:
    - Files staged for commit (will be committed)
    - Files with changes not staged (will NOT be committed)
