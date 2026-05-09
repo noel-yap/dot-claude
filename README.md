@@ -12,6 +12,7 @@ Analyzes staged changes and creates a [Conventional Commits](https://www.convent
 
 - Optionally accepts files to stage; if other related files are detected, asks before including them
 - Detects Jira ticket from branch config or branch name for the scope
+- Reviews staged changes and suggests improvements before generating the commit message
 - Generates 3 candidate commit messages and picks the best one
 - Asks for the rationale and incorporates it into the commit body
 - Updates `README.md` when the change affects UX, and stages it automatically

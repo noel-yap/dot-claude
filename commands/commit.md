@@ -32,19 +32,23 @@ If files are specified, stage only those files with `git add <files>` before pro
    - Use the `jira-task` branch config value if set.
    - Otherwise, extract the leading Jira ticket ID from the branch name (e.g. `JT-1234` from `JT-1234：some-feature`).
    - If neither is found, derive the scope from the changed code (module/component).
-3. Generate 3 Conventional Commits candidates: `<type>(<scope>): <description>` (imperative mood, <72 chars).
-4. Pick best one with reasoning.
-5. Ask the user: "Why is this change being made?" and wait for their answer.
-6. Incorporate the user's rationale in the commit message body along with what has changed.
-7. If this change affects UX (new behavior, changed prompts, different output), update `README.md` to reflect it and stage it with `git stage README.md`.
+3. Review the staged changes and suggest improvements before writing the commit message:
+   - Look for bugs, unclear names, dead code, simpler approaches, and missing edge cases.
+   - Present each suggestion concisely and ask the user which, if any, to apply.
+   - Apply approved suggestions and re-stage the affected files before continuing.
+4. Generate 3 Conventional Commits candidates: `<type>(<scope>): <description>` (imperative mood, <72 chars).
+5. Pick best one with reasoning.
+6. Ask the user: "Why is this change being made?" and wait for their answer.
+7. Incorporate the user's rationale in the commit message body along with what has changed.
+8. If this change affects UX (new behavior, changed prompts, different output), update `README.md` to reflect it and stage it with `git stage README.md`.
    - If files were specified by the user and `README.md` is not among them, ask the user before staging it.
-8. Display:
+9. Display:
    - Files staged for commit (will be committed)
    - Files with changes not staged (will NOT be committed)
    - Untracked files (will NOT be committed)
    - The full commit message (subject + body with rationale)
    Then ask the user to confirm before proceeding.
-9. If confirmed, commit: `git commit -m "<message>"`
+10. If confirmed, commit: `git commit -m "<message>"`
 
 ## Constraints
 - Follow Conventional Commits: https://www.conventionalcommits.org
