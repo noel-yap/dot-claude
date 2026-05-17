@@ -32,23 +32,25 @@ If files are specified, stage only those files with `git add <files>` before pro
    - Use the `jira-task` branch config value if set.
    - Otherwise, extract the leading Jira ticket ID from the branch name (e.g. `JT-1234` from `JT-1234：some-feature`).
    - If neither is found, derive the scope from the changed code (module/component).
-3. Review the staged changes and suggest improvements before writing the commit message:
-   - Look for bugs, unclear names, dead code, simpler approaches, and missing edge cases.
+3. Determine if the staged changes are a single cohesive change or multiple unrelated changes.
+4. Review the staged changes and suggest improvements before writing the commit message:
+   - Look for bugs, unclear names, dead code, redundant code, simpler approaches, and missing edge cases.
    - Present each suggestion concisely and ask the user which, if any, to apply.
    - Apply approved suggestions and re-stage the affected files before continuing.
-4. Generate 3 Conventional Commits candidates: `<type>(<scope>): <description>` (imperative mood, <72 chars).
-5. Pick best one with reasoning.
-6. Ask the user: "Why is this change being made?" and wait for their answer.
-7. Incorporate the user's rationale in the commit message body along with what has changed.
-8. If this change affects UX (new behavior, changed prompts, different output), update `README.md` to reflect it and stage it with `git stage README.md`.
+5. Generate 3 Conventional Commits candidates: `<type>(<scope>): <description>` (imperative mood, <72 chars).
+   - If multiple unrelated changes: generate candidates for the primary/umbrella change.
+6. Pick best one with reasoning.
+7. Ask the user: "Why is this change being made?", provide suggestions, and wait for their answer.
+8. Incorporate the user's rationale in the commit message body along with what has changed. If multiple unrelated changes are present, present each change as a separate bullet point.
+9. If this change affects UX (new behavior, changed prompts, different output), update `README.md` to reflect it and stage it with `git stage README.md`.
    - If files were specified by the user and `README.md` is not among them, ask the user before staging it.
-9. Display:
+10. Display:
    - Files staged for commit (will be committed)
    - Files with changes not staged (will NOT be committed)
    - Untracked files (will NOT be committed)
    - The full commit message (subject + body with rationale)
    Then ask the user to confirm before proceeding.
-10. If confirmed, commit: `git commit -m "<message>"`
+11. If confirmed, commit: `git commit -m "<message>"`
 
 ## Constraints
 - Follow Conventional Commits: https://www.conventionalcommits.org
