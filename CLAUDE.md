@@ -1,7 +1,14 @@
 # Shell Command Rules
 - Always quote paths and directory names with double quotes: `cd "path/with unicode"`.
+- **NEVER substitute Unicode characters with ASCII lookalikes in paths.** This includes:
+    - Full-width punctuation: `：`(U+FF1A) is NOT `:`(U+003A), `．`(U+FF0E) is NOT `.`(U+002E)
+    - Ellipses: `⋯`(U+22EF) or `…`(U+2026) are NOT `...`(three ASCII dots)
+    - Accented/composed chars: `é` is NOT `e`, `ñ` is NOT `n`
+    - Visually similar spaces: U+00A0 (no-break space) is NOT U+0020 (regular space); U+3000 (ideographic space `　`) is NOT U+0020
+    - Any other character that merely *looks like* an ASCII equivalent
+- When uncertain about a path, run `pwd` first and use the exact output — do not reconstruct the path from memory or context.
 - Preserve Unicode characters exactly as-is; never transliterate or escape them.
 - For paths with spaces, Unicode, or special chars: use `"$PWD/my dir café 🎉"`.
 - Examples:
-    - Good: `ls "📁 dir"`
-    - Bad: `ls 📁 dir` or `ls dir-with-café`
+    - Good: `ls "📁 dir"`, `cd "SDET-125：Have plugins⋯"`
+    - Bad: `ls 📁 dir`, `cd "SDET-125:Have plugins..."` (ASCII-substituted)
