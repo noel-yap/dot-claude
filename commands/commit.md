@@ -34,7 +34,7 @@ If files are specified, stage only those files with `git add <files>` before pro
    - If neither is found, derive the scope from the changed code (module/component).
 3. Determine if the staged changes are a single cohesive change or multiple unrelated changes.
 4. Review the staged changes and suggest improvements before writing the commit message:
-   - Look for bugs, unclear names, dead code, redundant code, simpler approaches, and missing edge cases.
+   - Look for bugs, unclear names, dead code, redundant code, simpler approaches, areas for refactoring, and missing edge cases.
    - Present each suggestion concisely and ask the user which, if any, to apply.
    - Apply approved suggestions and re-stage the affected files before continuing.
 5. Generate 3 Conventional Commits candidates: `<type>(<scope>): <description>` (imperative mood, <72 chars).
