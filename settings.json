@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cat \"${PWD}\")",
+      "Bash(cat \"${PWD}/*\")",
+      "Bash(cd \"${PWD}\")",
+      "Bash(cd \"${PWD}/*\")",
+      "Bash(dirname *)",
+      "Bash(git rev-parse --show-toplevel)",
+      "Bash(ls *)",
+      "Bash(pwd)"
+    ]
+  },
+  "model": "opus"
+}
