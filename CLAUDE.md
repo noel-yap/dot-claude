@@ -33,3 +33,7 @@ Before using any path in a shell command:
 ## Self-check (required before every Bash path)
 
 Ask yourself: "Did I type this path, or did I copy it from shell output?" If you typed it, stop — run `ls`/`pwd` first and use that output instead.
+
+# Python Rules
+
+- Prefer `uv` over `pip install` for installing packages and managing virtual environments.
