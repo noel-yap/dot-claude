@@ -12,3 +12,6 @@ shell-snapshots/
 # IDEA
 .idea/
 
+# Python cache (OSSF Scorecard BinaryArtifacts)
+__pycache__/
+*.pyc
