@@ -34,6 +34,44 @@ Before using any path in a shell command:
 
 Ask yourself: "Did I type this path, or did I copy it from shell output?" If you typed it, stop — run `ls`/`pwd` first and use that output instead.
 
+## File tools (Write/Edit/Read): the path rule applies to tool PARAMETERS too
+
+The shell rules above only protect you when you copy shell output *through the shell*. The `file_path` parameter of `Write`/`Edit`/`Read` has no shell in between — emitting the parameter IS retyping the path, and that is exactly where an ASCII lookalike gets substituted for the real Unicode byte. So the byte-for-byte protection does NOT transfer to tool arguments.
+
+**Failure mode:** passing a corrupted absolute path to `Write` does not error — it silently creates a **phantom twin directory tree** next to the real one and reports success at the wrong path.
+
+**Rules when the working dir (or any ancestor) contains non-ASCII:**
+1. Do NOT pass an absolute `file_path` to `Write`/`Edit`. Create/edit files through **Bash with relative paths** from a `pwd`-verified cwd: `cat > rel/path <<'EOF' … EOF` for new files. Use `cd "$(git rev-parse --show-toplevel)"` (command substitution preserves the bytes) then operate on relative paths.
+   - **When you genuinely need an absolute path, build it from `"${PWD}"`, never by retyping.** The shell holds the cwd as byte-exact (Unicode intact), so `"${PWD}/rel/path"` reconstructs the absolute path without you ever emitting the non-ASCII bytes yourself. Same for other shell-provided path variables (`"$(git rev-parse --show-toplevel)"`, `"${HOME}"`). This is shell-only — it does NOT make it safe to paste the resulting absolute string into a `Write`/`Edit` `file_path`.
+2. Only use `Write`/`Edit` with an absolute path when that path is verifiably pure ASCII (e.g. a slugified dir under `~/.claude/...`).
+3. **Verify-after-write:** a Write "success" is NOT proof the file landed where intended. Immediately confirm with a relative `ls rel/path` or `git status`, and check no sibling twin dir was spawned.
+4. **Symptom → diagnosis:** if a file you just wrote is "not found" by a follow-up relative `Read`/`ls`, suspect path corruption — `find <parent> -name <basename>` to locate twins, confirm the phantom holds only your mis-written files, then `rm -rf` it (guard with a glob + a real-repo marker test like `<dir>/.git` so you never touch the real tree).
+
+# Shell Script Style
+
+When writing or editing shell scripts, follow the [Google Shell Style Guide](https://google.github.io/styleguide/shellguide.html). Key rules:
+
+- **Which shell:** Use `bash` for executable scripts; start with `#!/usr/bin/env bash`. Reserve `sh` (POSIX) only when portability demands it. If a script grows past ~100 lines or needs non-trivial data structures, rewrite it in a more structured language instead.
+- **Formatting:** 2-space indent (no tabs), max 80-column lines, blank lines between functions. Put `; then` / `; do` on the same line as `if`/`for`/`while`.
+- **Quoting:** Quote everything that could contain a space or expansion: `"$var"`, `"$@"` (never `$*` for arg passing), `"$(cmd)"`. Prefer `"${var}"` braces around variables, especially inside strings.
+- **Command substitution & tests:** Use `$(...)`, never backticks. Use `[[ ... ]]` over `[ ... ]` or `test`. Use `(( ... ))` / `$(( ... ))` for arithmetic.
+- **Naming:** `lower_snake_case` for functions and local variables; `UPPER_SNAKE_CASE` for constants and exported/environment variables (mark constants `readonly` or `declare -r`). Name a library's functions `package::function`. Use `local` for all function-local variables, and separate declaration from command-substitution assignment so `$?` isn't masked (`local foo; foo="$(cmd)"`).
+- **Error handling:** Check return values — either `if ! cmd; then …` or test `$?`. Send error messages to STDERR (a `err()` helper writing to `>&2` is idiomatic). Consider `set -euo pipefail` for non-interactive scripts.
+- **Structure:** Constants and `main` at the top/bottom respectively; put all code in functions for anything beyond a trivial script, and call `main "$@"` as the last line. Prefer builtins over external processes (e.g. `${var//foo/bar}` over `sed`).
+- **Misc:** Comment non-obvious logic; avoid `eval`; pipe to `while read` rather than `for` over command output; avoid SUID/SGID.
+
 # Python Rules
 
 - Prefer `uv` over `pip install` for installing packages and managing virtual environments.
+
+When writing or editing Python, follow the [Google Python Style Guide](https://google.github.io/styleguide/pyguide.html). Key rules:
+
+- **Formatting:** 4-space indent (no tabs), max 80-column lines, two blank lines between top-level definitions and one between methods. Format with a tool (Black/`ruff format`/YAPF) rather than by hand.
+- **Naming:** `module_name`, `package_name`, `ClassName`, `ExceptionName`, `function_name`, `GLOBAL_CONSTANT_NAME`, `method_name`, `local_var_name`. Prefix internal/non-public names with a single leading underscore.
+- **Imports:** Import packages and modules only, not individual classes/functions (except `typing`, `collections.abc`, and a few standard exceptions). Use full package paths — no relative imports. Group as: `__future__`, stdlib, third-party, then local; sort each group lexicographically. One import per line.
+- **Type annotations:** Annotate public function signatures and any non-obvious code. Use modern typing (`X | None`, built-in generics like `list[int]`).
+- **Docstrings:** Triple-quoted `"""..."""` for every public module, class, and function. Use a one-line summary, then `Args:`/`Returns:`/`Raises:` sections for non-trivial functions.
+- **Strings:** Prefer f-strings (or `.format()`) over `%` and over `+` concatenation in loops; pick one quote style and stay consistent. Use implicit line-joining for long literals.
+- **Exceptions:** Catch specific exceptions, never a bare `except:`; minimize code inside the `try`. Don't use exceptions for ordinary control flow.
+- **Comprehensions & generators:** Fine when simple and single-line-ish; fall back to loops once they need multiple `for`/`if` clauses or get hard to read.
+- **General:** Prefer `is`/`is not` for `None` checks; use default arg values instead of mutable defaults (never `[]`/`{}` as a default); use `with` for resource management; avoid mutable globals; keep functions focused (roughly <40 lines as a guideline). Lint with `pylint`/`ruff`.
