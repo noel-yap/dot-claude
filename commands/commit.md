@@ -35,6 +35,9 @@ If files are specified, stage only those files with `git add <files>` before pro
 3. Determine if the staged changes are a single cohesive change or multiple unrelated changes.
 4. Review the staged changes and suggest improvements before writing the commit message:
    - Look for bugs, unclear names, dead code, redundant code, simpler approaches, areas for refactoring, and missing edge cases.
+   - Check for DRY (Don't Repeat Yourself) violations: duplicated logic, repeated literals/constants, or copy-pasted blocks that should be factored into a shared function, constant, or abstraction.
+     - Exempt test code: tests favor DAMP (Descriptive And Meaningful Phrases) over DRY, so some repetition in tests is acceptable and should not be flagged as a DRY violation.
+   - Check test code for cyclomatic complexity greater than one (complexity = 1 + number of decision points: `if`, `else if`, `case`, `for`, `while`, `&&`, `||`, ternary, `catch`, etc.). Tests should be straight-line. For each test with complexity > 1, recommend extracting the branching logic into a named function and running `/unit-test` on that function so the extracted logic is itself covered by tests.
    - Present each suggestion concisely and ask the user which, if any, to apply.
    - Apply approved suggestions and re-stage the affected files before continuing.
 5. Generate 3 Conventional Commits candidates: `<type>(<scope>): <description>` (imperative mood, <72 chars).

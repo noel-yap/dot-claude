@@ -14,6 +14,8 @@ Analyzes staged changes and creates a [Conventional Commits](https://www.convent
 - Detects Jira ticket from branch config or branch name for the scope
 - Detects whether staged changes form a single cohesive change or multiple unrelated ones, and lists unrelated changes as bullets in the body
 - Reviews staged changes and suggests improvements before generating the commit message
+  - Flags DRY violations (duplicated logic, repeated literals, copy-pasted blocks); test code is exempt since tests favor DAMP over DRY
+  - Flags tests with cyclomatic complexity greater than one, recommending the branching logic be extracted into a named function and covered via `/unit-test`
 - Generates 3 candidate commit messages and picks the best one
 - Asks for the rationale and incorporates it into the commit body
 - Updates `README.md` when the change affects UX, and stages it automatically
