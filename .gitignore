@@ -1,13 +1,24 @@
 # Claude Code
+.last-cleanup
+.last-update-result.json
 backups/
 cache/
+chrome/
+debug/
+file-history/
 history.jsonl
 ide/
+mcp-needs-auth-cache.json
+paste-cache/
 plugins/
 policy-limits.json
 projects/
+remote-settings.json
 sessions/
 shell-snapshots/
+stats-cache.json
+tasks/
+telemetry/
 
 # IDEA
 .idea/
