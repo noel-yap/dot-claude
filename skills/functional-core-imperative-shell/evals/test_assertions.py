@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from _assertions import (
     _block_has_kind_discriminator,
     _candidate_pure_blocks,
@@ -21,12 +20,15 @@ from _assertions import (
     assert_pure_core_no_io,
     assert_skill_not_invoked,
 )
-from _helpers import ClaudeRun
+from _helpers import EvalRun
 
 
 class TestCodeBlocks:
     def test_extracts_typescript_blocks(self) -> None:
-        text = "before\n```typescript\nconst x = 1;\n```\nbetween\n```ts\nconst y = 2;\n```\nafter"
+        text = (
+            "before\n```typescript\nconst x = 1;\n```\n"
+            "between\n```ts\nconst y = 2;\n```\nafter"
+        )
         assert _code_blocks(text) == ["const x = 1;\n", "const y = 2;\n"]
 
     def test_extracts_unlabelled_blocks(self) -> None:
@@ -36,19 +38,27 @@ class TestCodeBlocks:
 
 class TestIsCandidatePureBlock:
     def test_async_without_marker_returns_false(self) -> None:
-        assert not _is_candidate_pure_block("async function foo() { await bar(); }\n")
+        assert not _is_candidate_pure_block(
+            "async function foo() { await bar(); }\n"
+        )
 
     def test_sync_named_function_returns_true(self) -> None:
-        assert _is_candidate_pure_block("function decide(x: number) { return x > 0; }\n")
+        assert _is_candidate_pure_block(
+            "function decide(x: number) { return x > 0; }\n"
+        )
 
     def test_pure_core_marker_returns_true_even_if_async(self) -> None:
-        assert _is_candidate_pure_block("// pure core\nasync function broken() { await x(); }\n")
+        assert _is_candidate_pure_block(
+            "// pure core\nasync function broken() { await x(); }\n"
+        )
 
     def test_no_function_definition_returns_false(self) -> None:
         assert not _is_candidate_pure_block("const x: number = 1;\n")
 
     def test_arrow_function_returns_true(self) -> None:
-        assert _is_candidate_pure_block("const decide = (x: number) => x > 0;\n")
+        assert _is_candidate_pure_block(
+            "const decide = (x: number) => x > 0;\n"
+        )
 
 
 class TestCandidatePureBlocks:
@@ -151,7 +161,9 @@ class TestBlockHasKindDiscriminator:
         assert _block_has_kind_discriminator("type Alert = { kind: string; }")
 
     def test_absent_returns_false(self) -> None:
-        assert not _block_has_kind_discriminator("const x = { label: 'large' };")
+        assert not _block_has_kind_discriminator(
+            "const x = { label: 'large' };"
+        )
 
 
 class TestHasKindDiscriminator:
@@ -167,7 +179,9 @@ class TestSuspiciousSagaFnNames:
         assert _suspicious_saga_fn_names("") == []
 
     def test_finds_decide_prefix(self) -> None:
-        text = "```ts\nfunction decideAlert(order: Order) { return 'none'; }\n```"
+        text = (
+            "```ts\nfunction decideAlert(order: Order) { return 'none'; }\n```"
+        )
         assert _suspicious_saga_fn_names(text) == ["function decideAlert"]
 
     def test_finds_plan_saga(self) -> None:
@@ -181,7 +195,7 @@ class TestSuspiciousSagaFnNames:
 
 class TestAssertPureCoreNoIo:
     def test_passes_for_clean_block(self) -> None:
-        run = ClaudeRun(
+        run = EvalRun(
             eval_id="t",
             prompt="",
             skill_invoked=True,
@@ -196,7 +210,7 @@ class TestAssertPureCoreNoIo:
         assert_pure_core_no_io(run)
 
     def test_fails_when_block_awaits(self) -> None:
-        run = ClaudeRun(
+        run = EvalRun(
             eval_id="t",
             prompt="",
             skill_invoked=True,
@@ -216,17 +230,19 @@ class TestAssertPureCoreNoIo:
 
 class TestAssertNoPureCoreExtraction:
     def test_flags_pure_core_marker(self) -> None:
-        run = ClaudeRun(
+        run = EvalRun(
             eval_id="t",
             prompt="",
             skill_invoked=False,
-            assistant_text="```ts\n// pure core\nfunction f() {}\n// end pure core\n```",
+            assistant_text=(
+                "```ts\n// pure core\nfunction f() {}\n// end pure core\n```"
+            ),
         )
         with pytest.raises(AssertionError, match="pure core"):
             assert_no_pure_core_extraction(run)
 
     def test_passes_for_plain_retry(self) -> None:
-        run = ClaudeRun(
+        run = EvalRun(
             eval_id="t",
             prompt="",
             skill_invoked=False,
@@ -244,10 +260,14 @@ class TestAssertNoPureCoreExtraction:
 
 class TestAssertSkillNotInvoked:
     def test_fails_when_skill_invoked(self) -> None:
-        run = ClaudeRun(eval_id="t", prompt="", skill_invoked=True, assistant_text="")
+        run = EvalRun(
+            eval_id="t", prompt="", skill_invoked=True, assistant_text=""
+        )
         with pytest.raises(AssertionError):
             assert_skill_not_invoked(run)
 
     def test_passes_when_skill_not_invoked(self) -> None:
-        run = ClaudeRun(eval_id="t", prompt="", skill_invoked=False, assistant_text="")
+        run = EvalRun(
+            eval_id="t", prompt="", skill_invoked=False, assistant_text=""
+        )
         assert_skill_not_invoked(run)

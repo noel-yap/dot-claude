@@ -1,6 +1,4 @@
 {
-  "skill_name": "functional-core-imperative-shell",
-  "skill_path": "skills/functional-core-imperative-shell",
   "evals": [
     {
       "id": "mocks-pain",

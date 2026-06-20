@@ -1,6 +1,4 @@
 {
-  "skill_name": "dependency-injection",
-  "skill_path": "skills/dependency-injection",
   "evals": [
     {
       "id": "mock-pain-class",

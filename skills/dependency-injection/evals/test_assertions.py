@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from _assertions import (
     _adds_deps_param_to_pure_fn,
     _adds_test_code,
@@ -32,11 +31,11 @@ from _assertions import (
     assert_sut_has_no_bare_globals,
     assert_sut_has_no_bare_module_refs,
 )
-from _helpers import ClaudeRun
+from _helpers import EvalRun
 
 
-def _run(text: str, skill_invoked: bool = False) -> ClaudeRun:
-    return ClaudeRun(
+def _run(text: str, skill_invoked: bool = False) -> EvalRun:
+    return EvalRun(
         eval_id="t", prompt="", skill_invoked=skill_invoked, assistant_text=text
     )
 
@@ -48,7 +47,10 @@ def _run(text: str, skill_invoked: bool = False) -> ClaudeRun:
 
 class TestCodeBlocks:
     def test_extracts_typescript_blocks(self) -> None:
-        text = "```typescript\nconst x = 1;\n```\nbetween\n```ts\nconst y = 2;\n```"
+        text = (
+            "```typescript\nconst x = 1;\n```\n"
+            "between\n```ts\nconst y = 2;\n```"
+        )
         assert _code_blocks(text) == ["const x = 1;\n", "const y = 2;\n"]
 
     def test_extracts_unlabelled_blocks(self) -> None:
@@ -162,7 +164,9 @@ class TestHasConstructorWithDeps:
 
     def test_constructor_with_param_counts(self) -> None:
         text = (
-            "```ts\nclass C { constructor(private readonly store: Store) {} }\n```"
+            "```ts\n"
+            "class C { constructor(private readonly store: Store) {} }\n"
+            "```"
         )
         assert _has_constructor_with_deps(text)
 
@@ -193,7 +197,9 @@ class TestIntroducesInjectionSeam:
         )
 
     def test_neither(self) -> None:
-        assert not _introduces_injection_seam("```ts\nfunction f(x: number) {}\n```")
+        assert not _introduces_injection_seam(
+            "```ts\nfunction f(x: number) {}\n```"
+        )
 
 
 class TestIntroducesNarrowInterface:
@@ -203,7 +209,9 @@ class TestIntroducesNarrowInterface:
         )
 
     def test_type_alias(self) -> None:
-        assert _introduces_narrow_interface("```ts\ntype Clock = () => number;\n```")
+        assert _introduces_narrow_interface(
+            "```ts\ntype Clock = () => number;\n```"
+        )
 
     def test_neither(self) -> None:
         assert not _introduces_narrow_interface("```ts\nfunction f() {}\n```")
@@ -238,13 +246,18 @@ class TestHasProductionDefaultDep:
         text = (
             "```ts\n"
             "// AFTER\n"
-            "class C { constructor(private clock: Clock = () => Date.now()) {} }\n"
+            "class C { "
+            "constructor(private clock: Clock = () => Date.now()) {} }\n"
             "```"
         )
         assert _has_production_default_dep(text)
 
     def test_no_default(self) -> None:
-        text = "```ts\n// AFTER\nclass C { constructor(private clock: Clock) {} }\n```"
+        text = (
+            "```ts\n// AFTER\n"
+            "class C { constructor(private clock: Clock) {} }\n"
+            "```"
+        )
         assert not _has_production_default_dep(text)
 
 
@@ -272,7 +285,11 @@ class TestAddsDepsParamToPureFn:
         assert _adds_deps_param_to_pure_fn(text)
 
     def test_clean_pure_fn(self) -> None:
-        text = "```ts\nfunction subtotal(lines: CartLine[]): number { return 0; }\n```"
+        text = (
+            "```ts\n"
+            "function subtotal(lines: CartLine[]): number { return 0; }\n"
+            "```"
+        )
         assert not _adds_deps_param_to_pure_fn(text)
 
 
@@ -286,7 +303,11 @@ class TestIntroducesDIInterface:
         assert _introduces_di_interface(text)
 
     def test_no_di_interface(self) -> None:
-        text = "```ts\ninterface CartLine { unitPrice: number; quantity: number; }\n```"
+        text = (
+            "```ts\n"
+            "interface CartLine { unitPrice: number; quantity: number; }\n"
+            "```"
+        )
         assert not _introduces_di_interface(text)
 
 
@@ -325,18 +346,12 @@ class TestAssertIntroducesInjectionSeam:
 class TestAssertSutHasNoBareGlobals:
     def test_passes_when_clean(self) -> None:
         text = (
-            "```ts\n"
-            "// AFTER\nclass C { run() { return this.clock(); } }\n"
-            "```"
+            "```ts\n// AFTER\nclass C { run() { return this.clock(); } }\n```"
         )
         assert_sut_has_no_bare_globals(_run(text))
 
     def test_fails_on_date_now_leak(self) -> None:
-        text = (
-            "```ts\n"
-            "// AFTER\nclass C { run() { return Date.now(); } }\n"
-            "```"
-        )
+        text = "```ts\n// AFTER\nclass C { run() { return Date.now(); } }\n```"
         with pytest.raises(AssertionError, match="bare global I/O tokens"):
             assert_sut_has_no_bare_globals(_run(text))
 
@@ -355,11 +370,7 @@ class TestAssertSutHasNoBareModuleRefs:
         assert_sut_has_no_bare_module_refs(_run(text))
 
     def test_fails_on_bare_db(self) -> None:
-        text = (
-            "```ts\n"
-            "// AFTER\nclass C { async run() { await db.x(); } }\n"
-            "```"
-        )
+        text = "```ts\n// AFTER\nclass C { async run() { await db.x(); } }\n```"
         with pytest.raises(AssertionError, match="bare module references"):
             assert_sut_has_no_bare_module_refs(_run(text))
 
@@ -384,19 +395,25 @@ class TestAssertNarrowDepsInterface:
         )
 
     def test_fails_without(self) -> None:
-        with pytest.raises(AssertionError, match="named interface or type alias"):
+        with pytest.raises(
+            AssertionError, match="named interface or type alias"
+        ):
             assert_narrow_deps_interface(_run("```ts\nclass C {}\n```"))
 
 
 class TestAssertNoProductionDefaultDeps:
     def test_passes_when_no_default(self) -> None:
-        text = "```ts\n// AFTER\nclass C { constructor(private c: Clock) {} }\n```"
+        text = (
+            "```ts\n// AFTER\nclass C { constructor(private c: Clock) {} }\n```"
+        )
         assert_no_production_default_deps(_run(text))
 
     def test_fails_when_default_is_date_now(self) -> None:
         text = (
             "```ts\n// AFTER\n"
-            "class C { constructor(private c: Clock = () => Date.now()) {} }\n```"
+            "class C { "
+            "constructor(private c: Clock = () => Date.now()) {} }\n"
+            "```"
         )
         with pytest.raises(AssertionError, match="production-default"):
             assert_no_production_default_deps(_run(text))
@@ -404,7 +421,11 @@ class TestAssertNoProductionDefaultDeps:
 
 class TestAssertNoDepsParameterAdded:
     def test_passes_for_pure_fn(self) -> None:
-        text = "```ts\nfunction subtotal(lines: CartLine[]): number { return 0; }\n```"
+        text = (
+            "```ts\n"
+            "function subtotal(lines: CartLine[]): number { return 0; }\n"
+            "```"
+        )
         assert_no_deps_parameter_added(_run(text))
 
     def test_fails_when_deps_added(self) -> None:
@@ -415,7 +436,11 @@ class TestAssertNoDepsParameterAdded:
 
 class TestAssertNoCollaboratorInterfacesIntroduced:
     def test_passes_for_pure_fn(self) -> None:
-        text = "```ts\ninterface CartLine { unitPrice: number; quantity: number; }\n```"
+        text = (
+            "```ts\n"
+            "interface CartLine { unitPrice: number; quantity: number; }\n"
+            "```"
+        )
         assert_no_collaborator_interfaces_introduced(_run(text))
 
     def test_fails_on_clock_interface(self) -> None:

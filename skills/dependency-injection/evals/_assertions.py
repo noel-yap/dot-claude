@@ -5,9 +5,12 @@ from __future__ import annotations
 import itertools
 import re
 
-from _helpers import ClaudeRun
+from _helpers import EvalRun
+
 from eval_utils import (
     code_blocks as _code_blocks,
+)
+from eval_utils import (
     first_line as _first_line,
 )
 
@@ -38,9 +41,7 @@ INTERFACE_RE = re.compile(r"\binterface\s+(\w+)\b")
 TYPE_ALIAS_RE = re.compile(r"\btype\s+(\w+)\s*=")
 
 # A "test code" hint: looks like a test/expect/describe block was added.
-TEST_HINT_RE = re.compile(
-    r"\b(?:test|it|describe|expect)\s*\(", re.IGNORECASE
-)
+TEST_HINT_RE = re.compile(r"\b(?:test|it|describe|expect)\s*\(", re.IGNORECASE)
 
 # Marker for the SUT-after-refactor in the model's response, if it follows
 # the SKILL convention. Optional — many models won't use the marker, in
@@ -113,7 +114,9 @@ def _has_bare_token(block: str, token: str) -> bool:
 
 def _bare_token_leaks(block: str) -> list[str]:
     """All bare-module tokens that leak in `block`."""
-    return list(filter(lambda t: _has_bare_token(block, t), SUT_MODULE_LEAK_TOKENS))
+    return list(
+        filter(lambda t: _has_bare_token(block, t), SUT_MODULE_LEAK_TOKENS)
+    )
 
 
 def _substring_leaks(block: str) -> list[str]:
@@ -127,10 +130,12 @@ def _all_leaks_in_block(block: str) -> list[str]:
 
 def _leaks_with_snippets(text: str) -> list[tuple[str, str]]:
     """For every refactored block, pair each leaking token with a snippet."""
-    return list(itertools.chain.from_iterable(
-        ((tok, _first_line(block)) for tok in _all_leaks_in_block(block))
-        for block in _candidate_sut_blocks(text)
-    ))
+    return list(
+        itertools.chain.from_iterable(
+            ((tok, _first_line(block)) for tok in _all_leaks_in_block(block))
+            for block in _candidate_sut_blocks(text)
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +202,8 @@ def _has_production_default_dep(text: str) -> bool:
     inside parameter lists or class fields in the refactored blocks.
     """
     return any(
-        PROD_DEFAULT_DEP_RE.search(block) for block in _candidate_sut_blocks(text)
+        PROD_DEFAULT_DEP_RE.search(block)
+        for block in _candidate_sut_blocks(text)
     )
 
 
@@ -243,56 +249,59 @@ def _adds_test_code(text: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def assert_introduces_injection_seam(run: ClaudeRun) -> None:
-    """Fail if the refactor doesn't name collaborators in the unit's signature."""
+def assert_introduces_injection_seam(run: EvalRun) -> None:
+    """Fail unless the refactor names collaborators in the unit's signature."""
     assert _introduces_injection_seam(run.assistant_text), (
         "expected refactor to introduce a constructor (or `deps:` parameter) "
         "that names collaborators; saw no injection seam"
     )
 
 
-def assert_sut_has_no_bare_globals(run: ClaudeRun) -> None:
+def assert_sut_has_no_bare_globals(run: EvalRun) -> None:
     """Fail if the refactored unit leaks bare global I/O tokens."""
     blocks = _candidate_sut_blocks(run.assistant_text)
     assert blocks, (
         "no refactored SUT block found in claude output (no `// AFTER` or "
         "`// SUT` marker, and no plausible candidate block)"
     )
-    leaks = list(itertools.chain.from_iterable(
-        ((tok, _first_line(block)) for tok in _substring_leaks(block))
-        for block in blocks
-    ))
+    leaks = list(
+        itertools.chain.from_iterable(
+            ((tok, _first_line(block)) for tok in _substring_leaks(block))
+            for block in blocks
+        )
+    )
     assert not leaks, "SUT block(s) leak bare global I/O tokens: " + ", ".join(
         f"{tok!r} in '{snippet}'" for tok, snippet in leaks
     )
 
 
-def assert_sut_has_no_bare_module_refs(run: ClaudeRun) -> None:
+def assert_sut_has_no_bare_module_refs(run: EvalRun) -> None:
     """Fail if the refactored unit leaks bare module references (db.,
     emailService., fetch() — must be member access on this/deps)."""
     blocks = _candidate_sut_blocks(run.assistant_text)
     assert blocks, "no refactored SUT block found in claude output"
-    leaks = list(itertools.chain.from_iterable(
-        ((tok, _first_line(block)) for tok in _bare_token_leaks(block))
-        for block in blocks
-    ))
+    leaks = list(
+        itertools.chain.from_iterable(
+            ((tok, _first_line(block)) for tok in _bare_token_leaks(block))
+            for block in blocks
+        )
+    )
     assert not leaks, (
         "SUT block(s) leak bare module references (use `this.X` / `deps.X` "
-        "instead): " + ", ".join(
-            f"{tok!r} in '{snippet}'" for tok, snippet in leaks
-        )
+        "instead): "
+        + ", ".join(f"{tok!r} in '{snippet}'" for tok, snippet in leaks)
     )
 
 
-def assert_preserves_region_rule(run: ClaudeRun) -> None:
-    """Fail if the international/domestic subject line is lost in the refactor."""
+def assert_preserves_region_rule(run: EvalRun) -> None:
+    """Fail if the refactor drops the international/domestic subject line."""
     assert _preserves_region_rule(run.assistant_text), (
         "refactor lost the region rule: expected both 'Shipped (intl)' and "
         "'Shipped' to remain in the output"
     )
 
 
-def assert_composition_root_present(run: ClaudeRun) -> None:
+def assert_composition_root_present(run: EvalRun) -> None:
     """Fail if the output doesn't include a composition root wiring."""
     assert _has_composition_root(run.assistant_text), (
         "expected a composition root that imports production modules and "
@@ -301,7 +310,7 @@ def assert_composition_root_present(run: ClaudeRun) -> None:
     )
 
 
-def assert_narrow_deps_interface(run: ClaudeRun) -> None:
+def assert_narrow_deps_interface(run: EvalRun) -> None:
     """Fail if no narrow interface/type alias is declared for the deps."""
     assert _introduces_narrow_interface(run.assistant_text), (
         "expected at least one named interface or type alias for the "
@@ -310,7 +319,7 @@ def assert_narrow_deps_interface(run: ClaudeRun) -> None:
     )
 
 
-def assert_no_production_default_deps(run: ClaudeRun) -> None:
+def assert_no_production_default_deps(run: EvalRun) -> None:
     """Fail if any injected dep defaults to a production global."""
     assert not _has_production_default_dep(run.assistant_text), (
         "refactor introduces a production-default dep (e.g., `clock: Clock "
@@ -319,7 +328,7 @@ def assert_no_production_default_deps(run: ClaudeRun) -> None:
     )
 
 
-def assert_adds_tests(run: ClaudeRun) -> None:
+def assert_adds_tests(run: EvalRun) -> None:
     """Fail if the output contains no test-like code for the negative case."""
     assert _adds_test_code(run.assistant_text), (
         "expected the response to add tests for computeCartTotal (test/it/"
@@ -327,7 +336,7 @@ def assert_adds_tests(run: ClaudeRun) -> None:
     )
 
 
-def assert_no_deps_parameter_added(run: ClaudeRun) -> None:
+def assert_no_deps_parameter_added(run: EvalRun) -> None:
     """Fail if a deps parameter is added to a pure function (negative case)."""
     assert not _adds_deps_param_to_pure_fn(run.assistant_text), (
         "DI was incorrectly applied: a `deps:` parameter was added to a "
@@ -336,7 +345,7 @@ def assert_no_deps_parameter_added(run: ClaudeRun) -> None:
     )
 
 
-def assert_no_collaborator_interfaces_introduced(run: ClaudeRun) -> None:
+def assert_no_collaborator_interfaces_introduced(run: EvalRun) -> None:
     """Fail if DI-style collaborator interfaces are introduced for a pure fn."""
     assert not _introduces_di_interface(run.assistant_text), (
         "DI was incorrectly applied: a collaborator interface (Clock, Rng, "
@@ -344,7 +353,7 @@ def assert_no_collaborator_interfaces_introduced(run: ClaudeRun) -> None:
     )
 
 
-def assert_skill_not_invoked(run: ClaudeRun) -> None:
+def assert_skill_not_invoked(run: EvalRun) -> None:
     """Fail if the DI skill was invoked when it should have stayed silent."""
     assert not run.skill_invoked, (
         "dependency-injection skill was invoked on the pure "
@@ -362,6 +371,8 @@ ASSERTION_HANDLERS = {
     "no-production-default-deps": assert_no_production_default_deps,
     "adds-tests": assert_adds_tests,
     "no-deps-parameter-added": assert_no_deps_parameter_added,
-    "no-collaborator-interfaces-introduced": assert_no_collaborator_interfaces_introduced,
+    "no-collaborator-interfaces-introduced": (
+        assert_no_collaborator_interfaces_introduced
+    ),
     "skill-not-invoked": assert_skill_not_invoked,
 }
