@@ -1,9 +1,10 @@
 # Makefile for the skill eval suites.
 #
 # Each skill under skills/<name>/evals has fast unit tests (no API) plus
-# end-to-end "claude eval" tests (real model calls, graded over
-# --live-eval-trials runs with a --live-eval-min-pass threshold). The
-# two are split by the `live_eval` marker: unit targets select
+# end-to-end "claude eval" tests (real model calls, graded by a Beta-binomial
+# posterior: an assertion passes once the posterior puts most of its mass at
+# or above --live-eval-target-rate, over at most --live-eval-max-trials runs).
+# The two are split by the `live_eval` marker: unit targets select
 # `-m "not live_eval"`, eval targets select `-m live_eval`. The per-skill
 # eval dirs reuse the module names _helpers / _assertions, so they CANNOT be
 # collected in one pytest session — every target runs one eval dir at a time.
@@ -11,18 +12,18 @@
 # Run from this directory (skills/). Examples:
 #   make test                 # everything: unit tests then claude evals
 #   make test-unit            # fast unit tests only, no API calls
-#   make eval                 # all skills' claude evals (8 trials, >=7 pass)
+#   make eval                 # all skills' claude evals (target 2/3, <=21 runs)
 #   make eval-dependency-injection
-#   make eval TRIALS=5 MIN_PASS=4
+#   make eval TARGET_RATE=0.8 MAX_TRIALS=12
 #   make test-unit PYTEST_ARGS="-v"
 
 PYTEST      ?= python3 -m pytest
-TRIALS      ?= 8
-MIN_PASS    ?= 7
+MAX_TRIALS  ?= 21
+TARGET_RATE ?= 0.6667
 PYTEST_ARGS ?=
 
 UNIT_FLAGS := -m "not live_eval"
-EVAL_FLAGS := -m live_eval --live-eval-trials $(TRIALS) --live-eval-min-pass $(MIN_PASS)
+EVAL_FLAGS := -m live_eval --live-eval-max-trials $(MAX_TRIALS) --live-eval-target-rate $(TARGET_RATE)
 
 # Eval dirs discovered from the tree, e.g. "dependency-injection/evals".
 SKILL_DIRS := $(patsubst %/,%,$(dir $(wildcard */evals/evals.json)))
@@ -40,7 +41,7 @@ help: ## Show this help
 	@echo ""
 	@echo "Per-skill claude evals: make eval-<skill>"
 	@echo "Discovered skills:      $(SKILLS)"
-	@echo "Vars: TRIALS=$(TRIALS) MIN_PASS=$(MIN_PASS) PYTEST_ARGS='$(PYTEST_ARGS)'"
+	@echo "Vars: MAX_TRIALS=$(MAX_TRIALS) TARGET_RATE=$(TARGET_RATE) PYTEST_ARGS='$(PYTEST_ARGS)'"
 
 test: test-unit eval ## Run everything: unit tests then claude evals (real model calls)
 
@@ -53,7 +54,7 @@ test-unit: test-shared ## Run shared + every skill's unit tests (excludes live_e
 test-shared: ## Run the shared eval_utils package unit tests
 	$(PYTEST) eval_utils/tests $(PYTEST_ARGS)
 
-eval: ## Run every skill's claude evals (real model calls; set TRIALS/MIN_PASS)
+eval: ## Run every skill's claude evals (real model calls; set MAX_TRIALS/TARGET_RATE)
 	@for d in $(SKILL_DIRS); do \
 	  echo "== eval: $$d =="; \
 	  $(PYTEST) "$$d" $(EVAL_FLAGS) $(PYTEST_ARGS) || exit $$?; \

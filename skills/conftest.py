@@ -6,9 +6,9 @@ Two responsibilities:
      `test_*.py`) can `from eval_utils import ...` and `from test_utils
      import ...` without each one fiddling with `sys.path` itself.
   2. Re-export the pytest hooks (`pytest_addoption`,
-     `pytest_configure`) and the session-scoped `live_eval_min_pass`
-     fixture from `eval_utils` so the `--live-eval-trials` /
-     `--live-eval-min-pass` options and the `live_eval` marker are
+     `pytest_configure`) and the session-scoped `live_eval_target_rate`
+     fixture from `eval_utils` so the `--live-eval-max-trials` /
+     `--live-eval-target-rate` options and the `live_eval` marker are
      registered exactly once for the whole skills tree, regardless of which
      subset of skills pytest is pointed at.
 """
@@ -21,7 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from eval_utils import (  # noqa: E402, F401
-    live_eval_min_pass,
+    live_eval_target_rate,
     pytest_addoption,
     pytest_configure,
 )

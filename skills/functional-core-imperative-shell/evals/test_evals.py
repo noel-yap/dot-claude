@@ -2,17 +2,18 @@
 
 For each entry in ``evals.json`` this module:
 
-  1. Runs ``claude -p <prompt>`` up to ``--live-eval-trials`` times
-     (default 8) in adaptive concurrent batches via the ``eval_runs``
+  1. Runs ``claude -p <prompt>`` up to ``--live-eval-max-trials`` times
+     (default 21) in adaptive concurrent batches via the ``eval_runs``
      fixture in ``conftest.py``.
   2. Detects whether the FCIS skill was invoked by scanning the
      ``stream-json`` events for a ``Skill`` tool_use targeting our skill.
   3. Captures the full assistant text (the proposed refactor) and applies
      grep-style assertions for refactor quality.
 
-Because the model is non-deterministic, each assertion is graded over all
-trials and must pass in at least ``--live-eval-min-pass`` of them
-(default 7 of 8) rather than on a single draw.
+Because the model is non-deterministic, each assertion is graded by a
+Beta-binomial posterior over its true pass rate: the assertion passes when
+the posterior puts most of its mass at or above ``--live-eval-target-rate``
+(default 2/3) rather than on a single draw.
 
 Three of the four evals reference ``samples/order_processor.ts`` — a clear
 FCIS candidate where business decisions are entangled with database and
@@ -38,11 +39,12 @@ from _assertions import ASSERTION_HANDLERS
 from _helpers import (
     EVALS_PATH,
     EvalRun,
-    assert_pass_rate,
-    assertions_below_threshold,
+    assert_eval_passed,
+    failing_assertions,
     trial_outcomes,
     trigger_pass_counts,
 )
+from eval_utils import eval_passed
 
 
 class TestClaudeEvals:
@@ -67,18 +69,17 @@ class TestClaudeEvals:
     def test_eval_assertion(
         self,
         eval_runs: dict[str, list[EvalRun]],
-        live_eval_min_pass: int,
+        live_eval_target_rate: float,
         eval_id: str,
         assertion_id: str,
     ) -> None:
-        handler = ASSERTION_HANDLERS.get(assertion_id)
-        assert handler is not None, (
-            f"no handler registered for assertion {assertion_id!r}; "
-            f"add it to ASSERTION_HANDLERS in _assertions.py"
-        )
+        # Requesting eval_runs builds the fixture first, and that build runs
+        # load-time handler-coverage validation -- so every assertion_id here
+        # is guaranteed to have a registered handler.
+        handler = ASSERTION_HANDLERS[assertion_id]
         outcomes = trial_outcomes(eval_runs[eval_id], handler)
-        assert_pass_rate(
-            outcomes, live_eval_min_pass, f"{eval_id}::{assertion_id}"
+        assert_eval_passed(
+            outcomes, live_eval_target_rate, f"{eval_id}::{assertion_id}"
         )
 
     @pytest.mark.live_eval
@@ -86,12 +87,12 @@ class TestClaudeEvals:
     def test_eval_expectation(
         self,
         eval_runs: dict[str, list[EvalRun]],
-        live_eval_min_pass: int,
+        live_eval_target_rate: float,
         eval_id: str,
     ) -> None:
-        """Per-eval rollup: when any of this eval's assertions passed in fewer
-        than the threshold trials, fail once with the eval's `expected_output`
-        as the human-level intent, alongside which assertions fell short.
+        """Per-eval rollup: when any of this eval's assertions failed the
+        posterior bar, fail once with the eval's `expected_output` as the
+        human-level intent, alongside which assertions fell short.
 
         The per-assertion `test_eval_assertion` nodes still report exactly
         which assertion regressed and why; this node adds the expected-outcome
@@ -99,14 +100,15 @@ class TestClaudeEvals:
         """
         ev = next(e for e in self._evals() if e["id"] == eval_id)
         runs = eval_runs[eval_id]
-        below = assertions_below_threshold(
-            runs, ev["assertions"], ASSERTION_HANDLERS, live_eval_min_pass
+        failing = failing_assertions(
+            runs, ev["assertions"], ASSERTION_HANDLERS, live_eval_target_rate
         )
-        assert not below, (
-            f"{eval_id}: {len(below)} assertion(s) below threshold "
-            f"(need >= {live_eval_min_pass}/{len(runs)}):\n"
+        assert not failing, (
+            f"{eval_id}: {len(failing)} assertion(s) below the bar "
+            f"(P(rate >= {live_eval_target_rate:.3f}) must be >= 0.5):\n"
             + "\n".join(
-                f"  - {aid}: {n}/{len(runs)} passed" for aid, n in below
+                f"  - {aid}: {n}/{total} passed, p_good={p:.3f}"
+                for aid, n, total, p in failing
             )
             + f"\n\nExpected outcome:\n  {ev['expected_output']}"
         )
@@ -115,12 +117,16 @@ class TestClaudeEvals:
     def test_should_trigger_evals_invoked_skill(
         self,
         eval_runs: dict[str, list[EvalRun]],
-        live_eval_min_pass: int,
+        live_eval_target_rate: float,
     ) -> None:
         counts = trigger_pass_counts(eval_runs, self._evals())
-        failures = list(filter(lambda c: c[1] < live_eval_min_pass, counts))
+        failures = [
+            (eid, n, total)
+            for eid, n, total in counts
+            if not eval_passed(n, total, live_eval_target_rate)
+        ]
         assert not failures, (
-            f"FCIS skill invoked below threshold "
-            f"(need >= {live_eval_min_pass} trials): "
+            f"FCIS skill invoked below the bar "
+            f"(P(rate >= {live_eval_target_rate:.3f}) must be >= 0.5): "
             + ", ".join(f"{eid}: {n}/{total}" for eid, n, total in failures)
         )

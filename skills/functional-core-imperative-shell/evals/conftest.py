@@ -1,6 +1,6 @@
 """Pytest config for FCIS skill end-to-end Claude evals.
 
-The `--live-eval-trials` / `--live-eval-min-pass` options and the
+The `--live-eval-max-trials` / `--live-eval-target-rate` options and the
 `live_eval` marker are registered once at the parent `skills/conftest.py`.
 This file only wires the session-scoped `eval_runs` fixture for this skill.
 
@@ -8,17 +8,16 @@ Run the full eval set with:
 
     pytest skills/functional-core-imperative-shell/evals -m live_eval
 
-Each eval is graded over up to `--live-eval-trials` runs (default 8) and
-each assertion must pass in at least `--live-eval-min-pass` of them
-(defaults to `min(7, trials)`, so fewer trials still gives a reachable
-threshold). To save cost the runs are adaptive: trials run in concurrent
-batches (the first sized to the `min_pass` passes a clean eval needs) and
-re-grade after each batch, stopping as soon as every assertion has reached
-`min_pass` passes or one can no longer reach it — capping cost at `trials`
-runs while often spending fewer. To run, say, 5 trials needing 4 passes each:
+Each assertion is graded by a Beta-binomial posterior over its true pass
+rate: it passes once the posterior puts most of its mass at or above
+`--live-eval-target-rate` (default 2/3). To save cost the runs are adaptive:
+trials run in concurrent batches and re-grade after each, stopping as soon
+as the posterior locks PASS or FAIL — capping cost at `--live-eval-max-trials`
+runs (default 21) while usually spending far fewer. To demand a higher true
+rate over a smaller budget:
 
     pytest skills/functional-core-imperative-shell/evals -m live_eval \
-        --live-eval-trials 5 --live-eval-min-pass 4
+        --live-eval-target-rate 0.8 --live-eval-max-trials 12
 
 Evals are non-deterministic by design and are never cached: every trial is
 a fresh live `claude -p` call so the suite measures run-to-run variance.

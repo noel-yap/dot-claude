@@ -11,10 +11,11 @@ This README explains how to stand up an eval suite for a **new skill**.
 
 An eval runs the real `claude -p` CLI against a prompt, captures the
 stream-json transcript, and checks the response with grep-style assertions.
-Because the model is non-deterministic, every assertion is graded over
-**repeated live runs** and must pass in at least `min_pass` of them. There
-is **no caching** — repeated trials exist precisely to measure run-to-run
-variance.
+Because the model is non-deterministic, each assertion has an unknown true
+pass rate `theta`; we estimate it Bayesianly from **repeated live runs** and
+the assertion passes when the posterior puts most of its mass at or above a
+target rate (default **2/3**). There is **no caching** — repeated trials are
+the samples the posterior is built from.
 
 > Deterministic logic (your assertion helpers, regexes, parsing) belongs in
 > ordinary unit tests, **not** in evals. Evals are only for "does the model,
@@ -22,14 +23,14 @@ variance.
 >
 > Evals are **expensive**: each trial is a real `claude -p` invocation that
 > costs API tokens (and money) and takes seconds to minutes, and every eval
-> runs up to `--live-eval-trials` times (default 8). A full suite is
-> `evals × trials` live model calls. That is why they are isolated behind the
-> `live_eval` marker (run only via `-m live_eval` / the `make eval`
-> targets, never by the unit targets), why the harness runs trials adaptively
-> (stopping as soon as the verdict is fixed) and concurrently, and why you
-> should keep the eval set small and high-signal — lower
-> `--live-eval-trials` while iterating, and push anything checkable without
-> the model into the deterministic unit tests.
+> runs up to `--live-eval-max-trials` times (default 21). That is why they
+> are isolated behind the `live_eval` marker (run only via `-m live_eval` /
+> the `make eval` targets, never by the unit targets), why the harness runs
+> trials adaptively (stopping as soon as the posterior locks PASS or FAIL)
+> and concurrently, and why you should keep the eval set small and
+> high-signal — a clearly-good or clearly-broken skill settles in a handful
+> of trials, and anything checkable without the model belongs in the
+> deterministic unit tests.
 
 ## How the `eval_utils` package fits together
 
@@ -40,14 +41,15 @@ lives in. It provides, as plain functions (no per-skill state):
 | Area | Submodule | What you use |
 | --- | --- | --- |
 | Run + parse | `runner`, `stream_json` | `run_claude`, `run_claude_batch`, `parse_stream_json`, `EvalRun` |
-| Adaptive grading loop | `grading`, `plugin` | `run_eval_adaptive`, `next_batch_size`, `resolve_min_pass` |
-| Per-assertion scoring | `grading` | `trial_outcomes`, `assert_pass_rate`, `trigger_pass_counts` |
+| Bayesian verdict | `grading` | `posterior_pass_prob`, `eval_passed` |
+| Adaptive grading loop | `grading` | `run_eval_adaptive`, `next_batch_size` |
+| Per-assertion scoring | `grading` | `trial_outcomes`, `assert_eval_passed`, `failing_assertions`, `trigger_pass_counts` |
 | Assertion text helpers | `text_utils` | `code_blocks`, `first_line`, `missing_from` |
-| pytest wiring | `plugin` | `pytest_addoption`, `pytest_configure`, `live_eval_min_pass`, `make_eval_runs_fixture` |
+| pytest wiring | `plugin` | `pytest_addoption`, `pytest_configure`, `live_eval_target_rate`, `make_eval_runs_fixture` |
 
-The pytest hooks and the `live_eval_min_pass` fixture are re-exported once
-from the parent `skills/conftest.py`, so the `--live-eval-trials` /
-`--live-eval-min-pass` options and the `live_eval` marker are registered
+The pytest hooks and the `live_eval_target_rate` fixture are re-exported once
+from the parent `skills/conftest.py`, so the `--live-eval-max-trials` /
+`--live-eval-target-rate` options and the `live_eval` marker are registered
 for the whole tree. **A new skill never
 touches the `eval_utils` package or `skills/conftest.py`** — it only adds
 files under its own `evals/`.
@@ -105,7 +107,9 @@ below), so `evals.json` holds only the cases:
   tool actually fired. Use `should_trigger: false` for a "When NOT to use"
   case and add a `skill-not-invoked` assertion.
 - Each `assertions[].id` must have a handler registered in `_assertions.py`
-  (next step). `expected_output` is documentation only.
+  (next step) — `load_evals` enforces this when the `eval_runs` fixture is
+  built, raising a `KeyError` that names every gap before any trials run.
+  `expected_output` is documentation only.
 - Put the input files the prompt references under `samples/`.
 
 ### 2. `_helpers.py` — bind the skill identity
@@ -123,7 +127,8 @@ from typing import Any
 
 from eval_utils import (
     EvalRun,
-    assert_pass_rate,
+    assert_eval_passed,
+    failing_assertions,
     parse_stream_json as _parse_stream_json,
     trial_outcomes,
     trigger_pass_counts,
@@ -146,8 +151,8 @@ def _is_skill_hit(block: dict[str, Any]) -> bool:
 
 __all__ = [
     "EvalRun", "EVAL_DIR", "EVALS_PATH", "REPO_ROOT", "SKILL_NAME",
-    "_is_skill_hit", "assert_pass_rate", "parse_stream_json",
-    "trial_outcomes", "trigger_pass_counts",
+    "_is_skill_hit", "assert_eval_passed", "failing_assertions",
+    "parse_stream_json", "trial_outcomes", "trigger_pass_counts",
 ]
 ```
 
@@ -208,13 +213,14 @@ eval_runs = make_eval_runs_fixture(
 
 `make_eval_runs_fixture` returns a session-scoped fixture. For each eval it
 runs `run_eval_adaptive`, which fires trials in concurrent batches and stops
-as soon as the verdict is fixed, yielding `{eval_id: [EvalRun, ...]}`.
+as soon as the posterior locks PASS or FAIL, yielding
+`{eval_id: [EvalRun, ...]}`.
 
 ### 5. `test_evals.py` — the live evals
 
 Two tests, both marked `live_eval` (so the unit targets exclude them via
 `-m "not live_eval"` and the eval targets select them via `-m live_eval`).
-The grading threshold comes from the `live_eval_min_pass` fixture
+The target pass rate comes from the `live_eval_target_rate` fixture
 (re-exported by the parent conftest).
 
 ```python
@@ -226,7 +232,8 @@ import pytest
 
 from _assertions import ASSERTION_HANDLERS
 from _helpers import (
-    EVALS_PATH, EvalRun, assert_pass_rate, trial_outcomes, trigger_pass_counts,
+    EVALS_PATH, EvalRun, assert_eval_passed, failing_assertions,
+    trial_outcomes, trigger_pass_counts,
 )
 
 
@@ -248,25 +255,31 @@ class TestClaudeEvals:
     def test_eval_assertion(
         self,
         eval_runs: dict[str, list[EvalRun]],
-        live_eval_min_pass: int,
+        live_eval_target_rate: float,
         eval_id: str,
         assertion_id: str,
     ) -> None:
-        handler = ASSERTION_HANDLERS.get(assertion_id)
-        assert handler is not None, f"no handler for {assertion_id!r} in _assertions.py"
+        # eval_runs is built before this body runs, and that build validates
+        # handler coverage -- so assertion_id always has a registered handler.
+        handler = ASSERTION_HANDLERS[assertion_id]
         outcomes = trial_outcomes(eval_runs[eval_id], handler)
-        assert_pass_rate(outcomes, live_eval_min_pass, f"{eval_id}::{assertion_id}")
+        assert_eval_passed(outcomes, live_eval_target_rate, f"{eval_id}::{assertion_id}")
 
     @pytest.mark.live_eval
     def test_should_trigger_evals_invoked_skill(
         self,
         eval_runs: dict[str, list[EvalRun]],
-        live_eval_min_pass: int,
+        live_eval_target_rate: float,
     ) -> None:
+        from eval_utils import eval_passed
+
         counts = trigger_pass_counts(eval_runs, self._evals())
-        failures = [c for c in counts if c[1] < live_eval_min_pass]
+        failures = [
+            c for c in counts if not eval_passed(c[1], c[2], live_eval_target_rate)
+        ]
         assert not failures, (
-            f"skill invoked below threshold (need >= {live_eval_min_pass}): "
+            "skill invoked below the bar "
+            f"(P(rate >= {live_eval_target_rate:.3f}) must be >= 0.5): "
             + ", ".join(f"{eid}: {n}/{total}" for eid, n, total in failures)
         )
 ```
@@ -282,15 +295,73 @@ class TestClaudeEvals:
 
 ## How grading works
 
-- `--live-eval-trials N` (default **8**): max live runs per eval.
-- `--live-eval-min-pass M` (default **`min(7, trials)`**): each assertion
-  must pass in at least `M` trials. Leaving it unset and lowering `trials`
-  keeps the threshold reachable (`resolve_min_pass`).
-- Trials run **adaptively** (`next_batch_size` → `run_eval_adaptive`): the
-  first batch is the `min_pass` passes a clean eval needs, run concurrently;
-  after each batch the verdict is re-checked and the loop stops once every
-  assertion has reached `min_pass` or one can no longer reach it. Cost is
-  capped at `trials` and is often less.
+The model is a Beta-binomial: each assertion has an unknown true pass rate
+`theta`; with a `Beta(1, 1)` prior and `k` passes of `n` trials the posterior
+is `Beta(1 + k, 1 + (n - k))` (conjugate, so no sampling). `p_good` is the
+posterior mass at or above the target rate, `P(theta >= target)`.
+
+- `--live-eval-target-rate T` (default **2/3**): the true pass rate a good
+  skill should clear. An assertion's final grade (`eval_passed`) is PASS when
+  `p_good >= 0.5`.
+- `--live-eval-max-trials N` (default **21**): the budget ceiling. The verdict
+  usually locks long before this; it only bites for a skill sitting right at
+  the target rate, which is genuinely undecidable.
+- Trials run **adaptively** (`next_batch_size` → `run_eval_adaptive`). After
+  each concurrent batch the posterior is re-checked against a symmetric band:
+  PASS once `p_good > 1 - e^-2` (~0.865), FAIL once `p_good < e^-2` (~0.135),
+  keep sampling in between. Batches are sized to the fewest trials that could
+  settle the worst still-open check, floored at `BATCH_FLOOR` (3) so early
+  rounds fan out and an unlucky streak can't lock a verdict. A clearly-good or
+  clearly-broken skill settles in a handful of trials.
+
+### Why these defaults
+
+The defaults are tuned for the expected workload: **most eval runs are of
+working skills in CI** (a broken skill gets fixed fast, so it's rarely the
+thing under test). That makes the dominant failure mode a *false red* — a
+working skill that the build rejects by chance — so the parameters are chosen
+to keep that rare while still catching real regressions. The numbers below
+are from Monte-Carlo simulation of the adaptive loop (budget 21, prior
+`Beta(1, 1)`); "false-FAIL" is a good skill wrongly failed, "caught" is a
+broken skill correctly failed.
+
+- **`TARGET_RATE = 2/3`.** The bar must sit *below* where good skills actually
+  live (~0.9+), because asking the posterior to distinguish 0.90 from a bar
+  near it is both expensive and flaky. At 2/3 a true-0.90 skill false-fails
+  ~3% of the time (true-0.95: <1%) while a true-0.50 skill is caught ~94% and
+  true-0.40 ~99%. Pushing the bar to 0.7 roughly quadruples false reds on
+  0.9 skills; dropping it to 0.5 leaks mildly-broken skills (0.4–0.5) through.
+  2/3 is the knee of that trade — and "passes at least two of every three
+  attempts" is an easy bar to explain.
+- **Band `(e^-2, 1 - e^-2)` ≈ (0.135, 0.865).** Symmetric about ½, so an early
+  unlucky streak is as hard to lock a FAIL on as a lucky one is to lock a PASS.
+  `e^-2` is a natural "two-units-of-evidence" tail and pairs cleanly with the
+  2/3 target. Raising the low edge (e.g. to 0.5, a FAIL-eager asymmetric band)
+  was measured to ~10× the false-FAIL rate on good skills — rejected.
+- **`BATCH_FLOOR = 3`.** Not just a concurrency knob — it's a *stability* knob.
+  Flooring the opening salvo at 3 forces a representative sample before the
+  posterior may commit, which cut false-FAIL ~3× versus a floor of 1 (e.g.
+  12% → 4% at target 0.7, true 0.9) for ~2 extra trials. A floor of 2 was
+  strictly worse (same cost, less benefit, and it could *raise* round counts);
+  5 bought marginal speed at near-max trial cost. 3 is the sweet spot.
+- **`MAX_TRIALS = 21`.** A ceiling, not a target: good skills lock in ~2–3
+  rounds (~6–9 trials) and never approach it. It only bites for a skill
+  sitting *exactly* at the bar, which is genuinely undecidable — one more
+  trial can't rescue it. 21 = 3 × 7 divides evenly by `BATCH_FLOOR`, so the
+  worst case is a clean seven rounds of three with no ragged final batch. The
+  budget is the least sensitive parameter here (20 vs 21 was within noise).
+- **Prior `Beta(1, 1)` (uniform).** No prior opinion on a skill's pass rate —
+  the verdict is driven by the trials, not by a thumb on the scale. Raise
+  `PRIOR_ALPHA` for an optimistic prior ("skills usually work, demand less
+  evidence") or `PRIOR_BETA` for a skeptical one.
+- **Budget tiebreak at `p_good >= 0.5`.** If a run exhausts the budget still
+  inside the band, it's graded toward whichever side holds the majority of the
+  posterior. This only matters for at-the-bar skills (everything else locks via
+  the band first); 0.5 is the principled midpoint.
+
+All of these are per-run overridable from the CLI / Makefile (`TARGET_RATE`,
+`MAX_TRIALS`); the band, floor, prior, and tiebreak are module constants in
+`eval_utils.grading` — change them there if the workload assumptions shift.
 
 ## Running
 
@@ -300,9 +371,9 @@ From `skills/` (a `Makefile` wraps the common cases):
 make test                  # everything: unit tests then claude evals
 make test-unit             # fast unit tests for all skills, no API calls
 make test-shared           # just the shared eval_utils unit tests
-make eval                  # every skill's claude evals (8 trials, >=7 pass)
+make eval                  # every skill's claude evals (target 2/3, <=21 runs)
 make eval-<skill-name>     # one skill's claude evals
-make eval TRIALS=5 MIN_PASS=4
+make eval TARGET_RATE=0.8 MAX_TRIALS=12
 ```
 
 Or call pytest directly (always **one** eval dir at a time). The
@@ -315,9 +386,9 @@ python3 -m pytest skills/<skill-name>/evals -m "not live_eval"
 # live evals (requires the `claude` CLI on PATH; makes real model calls)
 python3 -m pytest skills/<skill-name>/evals -m live_eval
 
-# fewer trials while iterating
+# cheaper budget while iterating
 python3 -m pytest skills/<skill-name>/evals -m live_eval \
-    --live-eval-trials 3
+    --live-eval-max-trials 6
 ```
 
 With `-m "not live_eval"` the live evals are excluded, so the unit tests

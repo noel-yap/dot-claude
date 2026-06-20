@@ -12,17 +12,18 @@ concern:
     turn one `claude -p` run's stdout into an `EvalRun`.
   * `runner` -- the subprocess/env layer: `run_claude` and the concurrent
     `run_claude_batch`.
-  * `grading` -- the adaptive trial driver (`next_batch_size`,
-    `run_eval_adaptive`) plus the pass-rate rollups used to grade a batch.
-  * `plugin` -- the pytest options, the `live_eval` marker, `resolve_min_pass`,
-    and `make_eval_runs_fixture`.
+  * `grading` -- the Beta-binomial verdict (`posterior_pass_prob`,
+    `eval_passed`), the adaptive trial driver (`next_batch_size`,
+    `run_eval_adaptive`), and the rollups used to grade a batch.
+  * `plugin` -- the pytest options, the `live_eval` marker,
+    `live_eval_target_rate`, and `make_eval_runs_fixture`.
 
 This `__init__` re-exports the public surface so callers keep importing
 `from eval_utils import ...` unchanged. Per-skill `_helpers.py` modules add
 the parent directory to `sys.path` and re-export from here while supplying
 their own `SKILL_NAME` and path constants; per-skill `_assertions.py`
 modules import the shared regexes and text utilities; the parent
-`skills/conftest.py` re-exports the pytest hooks and `live_eval_min_pass`.
+`skills/conftest.py` re-exports the pytest hooks and `live_eval_target_rate`.
 
 Evals are inherently non-deterministic, so each is graded over repeated
 live runs; there is deliberately no result caching (deterministic tests
@@ -34,25 +35,32 @@ Stdlib + pytest only.
 from __future__ import annotations
 
 from eval_utils.grading import (
+    BATCH_FLOOR,
+    FAIL_THRESHOLD,
+    PASS_THRESHOLD,
+    PRIOR_ALPHA,
+    PRIOR_BETA,
     _check_failures,
     _eval_checks,
     _trigger_check,
-    assert_pass_rate,
-    assertions_below_threshold,
+    assert_eval_passed,
+    assert_handler_coverage,
+    eval_passed,
+    failing_assertions,
     load_evals,
     next_batch_size,
+    posterior_pass_prob,
     run_eval_adaptive,
     trial_outcomes,
     trigger_pass_counts,
 )
 from eval_utils.plugin import (
-    DEFAULT_MIN_PASS,
-    DEFAULT_TRIALS,
-    live_eval_min_pass,
+    DEFAULT_MAX_TRIALS,
+    DEFAULT_TARGET_RATE,
+    live_eval_target_rate,
     make_eval_runs_fixture,
     pytest_addoption,
     pytest_configure,
-    resolve_min_pass,
 )
 from eval_utils.runner import (
     DEFAULT_TIMEOUT_SECONDS,
@@ -99,19 +107,26 @@ __all__ = [
     "run_claude_batch",
     "stripped_env",
     # grading
-    "assert_pass_rate",
-    "assertions_below_threshold",
+    "BATCH_FLOOR",
+    "FAIL_THRESHOLD",
+    "PASS_THRESHOLD",
+    "PRIOR_ALPHA",
+    "PRIOR_BETA",
+    "assert_eval_passed",
+    "assert_handler_coverage",
+    "eval_passed",
+    "failing_assertions",
     "load_evals",
     "next_batch_size",
+    "posterior_pass_prob",
     "run_eval_adaptive",
     "trial_outcomes",
     "trigger_pass_counts",
     # plugin
-    "DEFAULT_MIN_PASS",
-    "DEFAULT_TRIALS",
-    "live_eval_min_pass",
+    "DEFAULT_MAX_TRIALS",
+    "DEFAULT_TARGET_RATE",
+    "live_eval_target_rate",
     "make_eval_runs_fixture",
     "pytest_addoption",
     "pytest_configure",
-    "resolve_min_pass",
 ]

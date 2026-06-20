@@ -17,8 +17,8 @@ from typing import Any
 
 from eval_utils import (
     EvalRun,
-    assert_pass_rate,
-    assertions_below_threshold,
+    assert_eval_passed,
+    failing_assertions,
     trial_outcomes,
     trigger_pass_counts,
 )
@@ -51,8 +51,8 @@ __all__ = [
     "REPO_ROOT",
     "SKILL_NAME",
     "_is_skill_hit",
-    "assert_pass_rate",
-    "assertions_below_threshold",
+    "assert_eval_passed",
+    "failing_assertions",
     "parse_stream_json",
     "trial_outcomes",
     "trigger_pass_counts",

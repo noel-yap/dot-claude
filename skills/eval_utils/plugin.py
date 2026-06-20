@@ -1,11 +1,11 @@
 """pytest integration: options, the `live_eval` marker, and the run fixture.
 
 The only module that touches pytest at import time. It registers the
-`--live-eval-trials` / `--live-eval-min-pass` options and the `live_eval`
-marker (both re-exported through `skills/conftest.py` so they apply once
-across the whole skills tree), resolves the effective per-assertion pass
-threshold, and builds the session-scoped fixture that runs `claude -p`
-across adaptive trial batches per eval.
+`--live-eval-max-trials` / `--live-eval-target-rate` options and the
+`live_eval` marker (both re-exported through `skills/conftest.py` so they
+apply once across the whole skills tree) and builds the session-scoped
+fixture that runs `claude -p` across adaptive trial batches per eval, graded
+by the Beta-binomial verdict in `eval_utils.grading`.
 """
 
 from __future__ import annotations
@@ -17,41 +17,55 @@ from typing import Any
 
 import pytest
 
-from eval_utils.grading import _eval_checks, load_evals, run_eval_adaptive
+from eval_utils.grading import (
+    PASS_THRESHOLD,
+    _eval_checks,
+    load_evals,
+    run_eval_adaptive,
+)
 from eval_utils.stream_json import EvalRun
 
-DEFAULT_TRIALS = 8
-DEFAULT_MIN_PASS = 7
+# Budget ceiling: the most trials any single eval will ever run. A verdict
+# usually locks well before this; it only bites for skills sitting right at
+# the target rate, which are genuinely undecidable. 21 = 3 * 7 divides evenly
+# by BATCH_FLOOR, so the worst case is a clean seven rounds of three.
+DEFAULT_MAX_TRIALS = 21
+
+# The true pass rate a good skill should clear. The verdict asks how much
+# posterior mass sits at or above this. 2/3 ("passes at least two of every
+# three attempts") keeps false fails on genuinely-good skills (true rate
+# >= 0.9) tiny while still catching real regressions.
+DEFAULT_TARGET_RATE = 2.0 / 3.0
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
-    """Register the `--live-eval-trials` and `--live-eval-min-pass` options.
+    """Register the `--live-eval-max-trials` and `--live-eval-target-rate`
+    options.
 
-    Re-exported through `skills/conftest.py` so the trial count and
-    per-assertion pass threshold can be tuned from the pytest command line.
+    Re-exported through `skills/conftest.py` so the budget ceiling and the
+    target pass rate can be tuned from the pytest command line.
     """
     parser.addoption(
-        "--live-eval-trials",
+        "--live-eval-max-trials",
         action="store",
         type=int,
-        default=DEFAULT_TRIALS,
+        default=DEFAULT_MAX_TRIALS,
         help=(
-            "How many times to run each eval. Each assertion must pass "
-            "in at least --live-eval-min-pass of these trials. "
-            f"Default {DEFAULT_TRIALS}."
+            "Budget ceiling: the most times any eval is run before the "
+            "verdict is forced. Trials usually stop sooner once the "
+            f"posterior locks. Default {DEFAULT_MAX_TRIALS}."
         ),
     )
     parser.addoption(
-        "--live-eval-min-pass",
+        "--live-eval-target-rate",
         action="store",
-        type=int,
-        default=None,
+        type=float,
+        default=DEFAULT_TARGET_RATE,
         help=(
-            "Minimum number of trials in which each assertion must pass for "
-            "the assertion to be considered passing. "
-            f"Defaults to min({DEFAULT_MIN_PASS}, "
-            "--live-eval-trials), so fewer trials than the default still "
-            "yield a reachable threshold."
+            "Target true pass rate a good skill should clear. The verdict "
+            "PASSes once the posterior puts > %.3f of its mass at or above "
+            "this rate, FAILs once < %.3f. Default %.4f."
+            % (PASS_THRESHOLD, 1.0 - PASS_THRESHOLD, DEFAULT_TARGET_RATE)
         ),
     )
 
@@ -65,23 +79,6 @@ def pytest_configure(config: pytest.Config) -> None:
     )
 
 
-def resolve_min_pass(min_pass_opt: int | None, trials: int) -> int:
-    """The effective per-assertion pass threshold.
-
-    When `--live-eval-min-pass` is left unset (`None`) it defaults to
-    `min(DEFAULT_MIN_PASS, trials)`, so running fewer trials than the default
-    still yields a reachable threshold (at the low end every trial must pass)
-    rather than an impossible "7 of 3". An explicit value is used as given.
-
-    Both the batch-sizing fixture and the grading fixture resolve through
-    here so the threshold that decides how many trials to run is the same one
-    the assertions are graded against.
-    """
-    return (
-        min(DEFAULT_MIN_PASS, trials) if min_pass_opt is None else min_pass_opt
-    )
-
-
 def make_eval_runs_fixture(
     evals_path: Path,
     repo_root: Path,
@@ -89,15 +86,15 @@ def make_eval_runs_fixture(
     assertion_handlers: dict[str, Callable[[EvalRun], None]],
 ) -> Callable[..., dict[str, list[EvalRun]]]:
     """Build a session-scoped pytest fixture that runs claude -p up to
-    `--live-eval-trials` times per eval in `evals_path` and returns the
+    `--live-eval-max-trials` times per eval in `evals_path` and returns the
     parsed runs keyed by eval id.
 
     Per-skill conftest.py binds the returned fixture to the name
     `eval_runs` so per-skill `test_evals.py` can request it directly. The
     value is a list of `EvalRun` per eval (one per trial run): trials run
-    in adaptive concurrent batches that stop as soon as the verdict is fixed,
-    decided from `assertion_handlers` (plus the skill-trigger check). Every
-    run is a fresh live call; results are never cached.
+    in adaptive concurrent batches that stop as soon as the Beta-binomial
+    verdict locks, decided from `assertion_handlers` (plus the skill-trigger
+    check). Every run is a fresh live call; results are never cached.
     """
 
     @pytest.fixture(scope="session")
@@ -105,26 +102,24 @@ def make_eval_runs_fixture(
         pytest.skip("claude CLI not found on PATH") if shutil.which(
             "claude"
         ) is None else None
-        trials = pytestconfig.getoption("--live-eval-trials")
-        min_pass = resolve_min_pass(
-            pytestconfig.getoption("--live-eval-min-pass"), trials
-        )
+        max_trials = pytestconfig.getoption("--live-eval-max-trials")
+        target = pytestconfig.getoption("--live-eval-target-rate")
 
         def build(item: dict[str, Any]) -> list[EvalRun]:
             checks = _eval_checks(item, assertion_handlers)
             return run_eval_adaptive(
-                item, repo_root, skill_name, trials, min_pass, checks
+                item, repo_root, skill_name, max_trials, target, checks
             )
 
-        return {item["id"]: build(item) for item in load_evals(evals_path)}
+        return {
+            item["id"]: build(item)
+            for item in load_evals(evals_path, assertion_handlers)
+        }
 
     return eval_runs
 
 
 @pytest.fixture(scope="session")
-def live_eval_min_pass(pytestconfig: pytest.Config) -> int:
-    """The per-assertion pass threshold, resolved like the batch sizing."""
-    return resolve_min_pass(
-        pytestconfig.getoption("--live-eval-min-pass"),
-        pytestconfig.getoption("--live-eval-trials"),
-    )
+def live_eval_target_rate(pytestconfig: pytest.Config) -> float:
+    """The target true pass rate the verdict grades each check against."""
+    return pytestconfig.getoption("--live-eval-target-rate")

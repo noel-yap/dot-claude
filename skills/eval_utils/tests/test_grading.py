@@ -1,14 +1,21 @@
-"""Unit tests for `eval_utils.grading` (verdict logic + pass-rate rollups).
+"""Unit tests for `eval_utils.grading` (Bayesian verdict + rollups).
 
-Covers the adaptive trial driver (`next_batch_size`, `run_eval_adaptive`
-and the checks feeding them) and the rollups per-skill suites grade with
-(`trial_outcomes`, `assert_pass_rate`, `assertions_below_threshold`,
-`trigger_pass_counts`). `eval_utils` is skill-independent, so this logic is
-tested once here rather than duplicated per skill.
+Covers the Beta-binomial core (`_betainc`, `posterior_pass_prob`,
+`_verdict`, `eval_passed`), the adaptive trial driver (`next_batch_size`,
+`run_eval_adaptive` and the checks feeding them), and the rollups per-skill
+suites grade with (`trial_outcomes`, `assert_eval_passed`,
+`failing_assertions`, `trigger_pass_counts`). `eval_utils` is
+skill-independent, so this logic is tested once here rather than duplicated
+per skill.
+
+Expected numbers below are for the shipped constants: TARGET defaults to
+2/3, the band is (e^-2, 1 - e^-2), the prior is Beta(1, 1), and
+`BATCH_FLOOR` is 3.
 """
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -17,16 +24,26 @@ import pytest
 
 import eval_utils
 from eval_utils import (
+    BATCH_FLOOR,
+    FAIL_THRESHOLD,
+    PASS_THRESHOLD,
     EvalRun,
     _check_failures,
     _eval_checks,
     _trigger_check,
-    assert_pass_rate,
-    assertions_below_threshold,
+    assert_eval_passed,
+    assert_handler_coverage,
+    eval_passed,
+    failing_assertions,
+    load_evals,
     next_batch_size,
+    posterior_pass_prob,
     trial_outcomes,
     trigger_pass_counts,
 )
+from eval_utils.grading import Verdict, _betainc, _resolve_shortfall, _verdict
+
+TARGET = 2.0 / 3.0
 
 
 def _runs(*passed: bool) -> list[EvalRun]:
@@ -35,6 +52,79 @@ def _runs(*passed: bool) -> list[EvalRun]:
         EvalRun(eval_id="t", prompt="", skill_invoked=p, assistant_text="")
         for p in passed
     ]
+
+
+def _skill_check(run: EvalRun) -> None:
+    assert run.skill_invoked, "miss"
+
+
+class TestBetainc:
+    """The regularized incomplete beta -- the Beta CDF underneath everything."""
+
+    # Beta(1, 1) is uniform, so its CDF at x is x.
+    @pytest.mark.parametrize("x", [0.0, 0.3, 0.5, 0.864, 1.0])
+    def test_uniform_cdf_is_identity(self, x: float) -> None:
+        assert _betainc(x, 1.0, 1.0) == pytest.approx(x, abs=1e-9)
+
+    def test_clamps_outside_unit_interval(self) -> None:
+        assert _betainc(-0.1, 2.0, 3.0) == 0.0
+        assert _betainc(1.5, 2.0, 3.0) == 1.0
+
+    def test_matches_closed_form_for_small_beta(self) -> None:
+        # For Beta(1, b), P(theta <= x) = 1 - (1 - x)**b.
+        assert _betainc(0.5, 1.0, 3.0) == pytest.approx(1 - 0.5**3, abs=1e-9)
+
+
+class TestPosteriorPassProb:
+    """p_good = P(theta >= target) under the Beta(1,1) posterior."""
+
+    def test_no_trials_is_prior_mass_above_target(self) -> None:
+        # Beta(1, 1): P(theta >= t) = 1 - t.
+        assert posterior_pass_prob(0, 0, TARGET) == pytest.approx(
+            1 - TARGET, abs=1e-9
+        )
+
+    def test_rises_with_more_passes(self) -> None:
+        assert (
+            posterior_pass_prob(1, 1, TARGET)
+            < posterior_pass_prob(3, 3, TARGET)
+            < posterior_pass_prob(6, 6, TARGET)
+        )
+
+    def test_falls_with_more_failures(self) -> None:
+        assert (
+            posterior_pass_prob(0, 1, TARGET)
+            > posterior_pass_prob(0, 3, TARGET)
+            > posterior_pass_prob(0, 6, TARGET)
+        )
+
+
+class TestVerdict:
+    """The band that drives early stopping."""
+
+    def test_undetermined_before_any_trials(self) -> None:
+        assert _verdict(0, 0, TARGET) == Verdict.UNDETERMINED
+
+    def test_pass_once_above_high_edge(self) -> None:
+        # 6 clean passes clears PASS_THRESHOLD at target 2/3.
+        assert _verdict(6, 6, TARGET) == Verdict.PASS
+        assert posterior_pass_prob(6, 6, TARGET) > PASS_THRESHOLD
+
+    def test_fail_once_below_low_edge(self) -> None:
+        # 2 clean failures drops below FAIL_THRESHOLD at target 2/3.
+        assert _verdict(0, 2, TARGET) == Verdict.FAIL
+        assert posterior_pass_prob(0, 2, TARGET) < FAIL_THRESHOLD
+
+
+class TestEvalPassed:
+    """The final grade: posterior majority above the bar."""
+
+    def test_passes_when_majority_mass_above_bar(self) -> None:
+        assert eval_passed(3, 3, TARGET) is True  # p_good ~0.80
+
+    def test_fails_when_majority_mass_below_bar(self) -> None:
+        assert eval_passed(2, 3, TARGET) is False
+        assert eval_passed(4, 6, TARGET) is False
 
 
 class TestTriggerCheck:
@@ -57,21 +147,24 @@ class TestTrialOutcomes:
         assert outcomes[1][1] is not None
 
 
-class TestAssertPassRate:
-    def test_passes_at_threshold(self) -> None:
-        assert_pass_rate(
-            [(0, None), (1, None), (2, "bad")], min_pass=2, label="x"
-        )
+class TestAssertEvalPassed:
+    def test_passes_when_posterior_clears_bar(self) -> None:
+        # 3 of 3 passes -> p_good ~0.80 >= 0.5.
+        assert_eval_passed([(0, None), (1, None), (2, None)], TARGET, "x")
 
-    def test_fails_below_threshold(self) -> None:
+    def test_fails_when_posterior_below_bar(self) -> None:
         with pytest.raises(AssertionError, match=r"1/3 trials passed"):
-            assert_pass_rate(
-                [(0, None), (1, "bad"), (2, "bad")], min_pass=2, label="x"
+            assert_eval_passed(
+                [(0, None), (1, "bad"), (2, "bad")], TARGET, "x"
             )
 
+    def test_failure_message_reports_p_good(self) -> None:
+        with pytest.raises(AssertionError, match=r"P\(rate >= 0\.667\)"):
+            assert_eval_passed([(0, "bad"), (1, "bad")], TARGET, "x")
 
-class TestAssertionsBelowThreshold:
-    """Per-eval rollup of which assertions passed in fewer than `min_pass`."""
+
+class TestFailingAssertions:
+    """Per-eval rollup of which assertions failed the posterior bar."""
 
     @staticmethod
     def _skill(run: EvalRun) -> None:
@@ -84,38 +177,105 @@ class TestAssertionsBelowThreshold:
     def _handlers(self) -> dict:
         return {"a": self._skill, "b": self._text}
 
-    def test_empty_when_all_clear_threshold(self) -> None:
-        # 3 runs that pass the "skill" check; threshold 2.
-        runs = _runs(True, True, True)
+    def test_empty_when_all_clear_bar(self) -> None:
+        runs = _runs(True, True, True)  # 3/3 -> p_good ~0.80
         assertions = [{"id": "a"}]
         assert (
-            assertions_below_threshold(runs, assertions, self._handlers(), 2)
+            failing_assertions(runs, assertions, self._handlers(), TARGET)
             == []
         )
 
-    def test_reports_id_and_pass_count_below_threshold(self) -> None:
-        # 1 of 3 runs invoked the skill; need 2.
-        runs = _runs(True, False, False)
+    def test_reports_id_counts_and_p_good_below_bar(self) -> None:
+        runs = _runs(True, False, False)  # 1/3 invoked the skill
         assertions = [{"id": "a"}]
-        assert assertions_below_threshold(
-            runs, assertions, self._handlers(), 2
-        ) == [("a", 1)]
+        result = failing_assertions(runs, assertions, self._handlers(), TARGET)
+        assert len(result) == 1
+        aid, passes, trials, p_good = result[0]
+        assert (aid, passes, trials) == ("a", 1, 3)
+        assert p_good < 0.5
 
-    def test_skips_assertions_without_a_handler(self) -> None:
+    def test_raises_on_assertion_without_a_handler(self) -> None:
+        # Coverage is validated at load time; reaching grading with a
+        # handlerless assertion is a bug, so it hard-fails rather than skips.
         runs = _runs(False, False)
-        # "missing" has no handler even though it would be below threshold.
         assertions = [{"id": "missing"}, {"id": "a"}]
-        assert assertions_below_threshold(
-            runs, assertions, self._handlers(), 2
-        ) == [("a", 0)]
+        with pytest.raises(KeyError, match="missing"):
+            failing_assertions(runs, assertions, self._handlers(), TARGET)
 
     def test_collects_every_failing_assertion(self) -> None:
-        # All runs miss skill (a) and have empty text (b): both below 2.
+        # All runs miss skill (a) and have empty text (b): both fail the bar.
         runs = _runs(False, False)
         assertions = [{"id": "a"}, {"id": "b"}]
-        assert assertions_below_threshold(
-            runs, assertions, self._handlers(), 2
-        ) == [("a", 0), ("b", 0)]
+        result = failing_assertions(runs, assertions, self._handlers(), TARGET)
+        assert [aid for aid, *_ in result] == ["a", "b"]
+
+
+class TestAssertHandlerCoverage:
+    """Load-time guard that every assertion has a registered handler."""
+
+    @staticmethod
+    def _handlers() -> dict:
+        return {"a": lambda _r: None, "b": lambda _r: None}
+
+    def test_passes_when_every_assertion_is_handled(self) -> None:
+        evals = [{"id": "e1", "assertions": [{"id": "a"}, {"id": "b"}]}]
+        assert_handler_coverage(evals, self._handlers())  # no raise
+
+    def test_tolerates_eval_without_assertions(self) -> None:
+        evals = [{"id": "e1", "should_trigger": True}]
+        assert_handler_coverage(evals, self._handlers())  # no raise
+
+    def test_raises_listing_every_gap(self) -> None:
+        evals = [
+            {"id": "e1", "assertions": [{"id": "a"}, {"id": "x"}]},
+            {"id": "e2", "assertions": [{"id": "y"}]},
+        ]
+        with pytest.raises(KeyError) as exc:
+            assert_handler_coverage(evals, self._handlers())
+        message = str(exc.value)
+        assert "e1::x" in message
+        assert "e2::y" in message
+        assert "e1::a" not in message
+
+
+class TestLoadEvals:
+    """Reading an evals.json, with an optional load-time coverage check."""
+
+    @staticmethod
+    def _write(tmp_path: Path, payload: dict) -> Path:
+        path = tmp_path / "evals.json"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        return path
+
+    def test_returns_evals_without_checking_handlers_when_omitted(
+        self, tmp_path: Path
+    ) -> None:
+        # With no handlers passed, the unhandled assertion is not validated.
+        path = self._write(
+            tmp_path, {"evals": [{"id": "e1", "assertions": [{"id": "a"}]}]}
+        )
+        assert load_evals(path) == [
+            {"id": "e1", "assertions": [{"id": "a"}]}
+        ]
+
+    def test_returns_evals_when_handlers_cover_every_assertion(
+        self, tmp_path: Path
+    ) -> None:
+        path = self._write(
+            tmp_path, {"evals": [{"id": "e1", "assertions": [{"id": "a"}]}]}
+        )
+        evals = load_evals(path, {"a": lambda _r: None})
+        assert [ev["id"] for ev in evals] == ["e1"]
+
+    def test_raises_when_an_assertion_lacks_a_handler(
+        self, tmp_path: Path
+    ) -> None:
+        path = self._write(
+            tmp_path,
+            {"evals": [{"id": "e1", "assertions": [{"id": "missing"}]}]},
+        )
+        with pytest.raises(KeyError, match="e1::missing"):
+            load_evals(path, {"a": lambda _r: None})
 
 
 class TestEvalChecks:
@@ -134,117 +294,114 @@ class TestEvalChecks:
 
 
 class TestCheckFailures:
-    @staticmethod
-    def _check(run: EvalRun) -> None:
-        assert run.skill_invoked, "miss"
-
     def test_counts_failing_runs(self) -> None:
-        assert _check_failures(_runs(True, False, False), self._check) == 2
+        assert _check_failures(_runs(True, False, False), _skill_check) == 2
 
     def test_counts_zero_when_all_pass(self) -> None:
-        assert _check_failures(_runs(True, True), self._check) == 0
+        assert _check_failures(_runs(True, True), _skill_check) == 0
+
+
+class TestResolveShortfall:
+    """The per-check optimistic shortfall that feeds `next_batch_size`.
+
+    Returns the fewest further trials that could settle one undetermined
+    check -- the shorter of a clean all-pass streak (clears PASS_THRESHOLD)
+    and a clean all-fail streak (drops below FAIL_THRESHOLD) -- falling back
+    to the remaining budget when neither resolves in time. Target 2/3.
+    """
+
+    def test_takes_pass_route_when_a_passing_streak_settles_sooner(self) -> None:
+        # From 5/6, a 3-pass streak clears the bar before any fail streak
+        # (which would need 4) could, so the pass route drives the result.
+        assert _resolve_shortfall(5, 6, TARGET, 16) == 3
+
+    def test_takes_fail_route_when_a_failing_streak_settles_sooner(self) -> None:
+        # From 2/4, a single further failure already drops below the floor,
+        # while an all-pass streak would need far more; the fail route wins.
+        assert _resolve_shortfall(2, 4, TARGET, 16) == 1
+
+    def test_falls_back_to_remaining_when_neither_streak_settles(self) -> None:
+        # From 3/5 with only 2 trials left, neither a 2-pass nor a 2-fail
+        # streak clears the band, so it yields the whole remaining budget.
+        assert _resolve_shortfall(3, 5, TARGET, 2) == 2
 
 
 class TestNextBatchSize:
     """The adaptive batch sizing that drives `run_eval_adaptive`.
 
-    A run "passes" a check when `skill_invoked` is True; `_check` fails on a
-    miss, so a check's failure count equals its number of misses. The result
-    is 0 once the verdict is fixed (every check at `min_pass`, or one out of
-    reach), else the number of trials to run next.
+    A run "passes" `_skill_check` when `skill_invoked` is True. The result is
+    0 once the eval verdict is fixed (every check PASS-locked, or any check
+    FAIL-locked, or the budget spent), else the optimistic batch -- the
+    largest per-undetermined-check shortfall, floored at `BATCH_FLOOR` and
+    capped by the remaining budget. Numbers assume target 2/3.
     """
 
-    @staticmethod
-    def _check(run: EvalRun) -> None:
-        assert run.skill_invoked, "miss"
+    def test_first_batch_is_the_floor(self) -> None:
+        # From scratch the optimistic shortfall (a single failure could FAIL)
+        # is below the floor, so the floor drives the opening salvo.
+        assert next_batch_size([], [_skill_check], 21, TARGET) == BATCH_FLOOR
 
-    def test_first_batch_targets_min_pass(self) -> None:
-        # 7-of-8, nothing run yet: optimistically run the 7 passes owed.
-        assert next_batch_size([], [self._check], trials=8, min_pass=7) == 7
+    def test_zero_once_pass_locked(self) -> None:
+        runs = _runs(*([True] * 6))  # p_good > PASS_THRESHOLD
+        assert next_batch_size(runs, [_skill_check], 21, TARGET) == 0
 
-    def test_zero_once_min_pass_reached(self) -> None:
-        runs = _runs(*([True] * 7))  # already 7 passes
-        assert next_batch_size(runs, [self._check], trials=8, min_pass=7) == 0
+    def test_zero_once_fail_locked(self) -> None:
+        runs = _runs(False, False, False)  # p_good < FAIL_THRESHOLD
+        assert next_batch_size(runs, [_skill_check], 21, TARGET) == 0
 
-    def test_runs_one_more_on_single_failure(self) -> None:
-        runs = _runs(
-            True, True, True, True, True, True, False
-        )  # 6 pass, 1 fail
-        assert next_batch_size(runs, [self._check], trials=8, min_pass=7) == 1
-
-    def test_zero_once_out_of_reach(self) -> None:
-        runs = _runs(
-            True, True, True, True, True, False, False
-        )  # cannot reach 7
-        assert next_batch_size(runs, [self._check], trials=8, min_pass=7) == 0
-
-    def test_zero_when_trials_exhausted(self) -> None:
-        runs = _runs(*([True] * 4 + [False] * 4))  # 8 runs, 4 passes, undecided
-        assert next_batch_size(runs, [self._check], trials=8, min_pass=7) == 0
+    def test_zero_when_budget_exhausted(self) -> None:
+        runs = _runs(*([True] * 13 + [False] * 8))  # 21 runs, still undetermined
+        assert next_batch_size(runs, [_skill_check], 21, TARGET) == 0
 
     def test_no_checks_runs_nothing(self) -> None:
-        assert (
-            next_batch_size(_runs(*([False] * 3)), [], trials=8, min_pass=7)
-            == 0
-        )
+        assert next_batch_size(_runs(False, False), [], 21, TARGET) == 0
 
-    def test_batch_stays_optimistic_near_a_fail_decision(self) -> None:
-        # 4-of-8: 3 failures already, but the batch stays at the 4 passes
-        # owed (capped by the 5 remaining), favouring concurrency over
-        # minimising runs on a check that may yet fail.
-        runs = _runs(False, False, False)  # 0 pass, 3 fail
-        assert next_batch_size(runs, [self._check], trials=8, min_pass=4) == 4
+    def test_uses_shortfall_when_it_exceeds_the_floor(self) -> None:
+        # 4 of 5 passes: undetermined, and the optimistic shortfall is 4 (> floor).
+        runs = _runs(True, True, True, True, False)
+        assert next_batch_size(runs, [_skill_check], 21, TARGET) == 4
 
-    def test_batch_takes_largest_shortfall_across_checks(self) -> None:
-        def check_a(run: EvalRun) -> None:
-            assert run.skill_invoked, "a"
+    def test_caps_batch_at_remaining_budget(self) -> None:
+        # 20 runs done, still undetermined: only 1 trial of budget remains.
+        runs = _runs(*([True] * 13 + [False] * 7))
+        assert next_batch_size(runs, [_skill_check], 21, TARGET) == 1
 
-        def check_b(run: EvalRun) -> None:
-            assert run.assistant_text, "b"
+    def test_takes_largest_shortfall_across_checks(self) -> None:
+        def check_text(run: EvalRun) -> None:
+            assert run.assistant_text, "text"
 
-        # check_a: 2/2 pass (shortfall 3); check_b: 1/2 pass (shortfall 4).
-        # The larger shortfall drives the batch; the fail budget is loose.
+        # skill_invoked: 4/5 (shortfall 4); assistant_text: 3/5 (shortfall 2).
+        # Both undetermined; the larger shortfall drives the batch.
         runs = [
-            EvalRun(
-                eval_id="t", prompt="", skill_invoked=True, assistant_text="ok"
-            ),
-            EvalRun(
-                eval_id="t", prompt="", skill_invoked=True, assistant_text=""
-            ),
+            EvalRun(eval_id="t", prompt="", skill_invoked=inv, assistant_text=t)
+            for inv, t in zip(
+                [True, True, True, True, False], ["x", "x", "x", "", ""]
+            )
         ]
-        assert (
-            next_batch_size(runs, [check_a, check_b], trials=10, min_pass=5)
-            == 4
-        )
+        assert next_batch_size(runs, [_skill_check, check_text], 21, TARGET) == 4
 
-    def test_shrinks_over_successive_rounds(self) -> None:
-        # 3-of-7, a mixed run sequence: the batch shrinks 3 -> 2 -> 1 as
-        # passes accumulate, confirming more than two rounds are supported.
-        assert next_batch_size([], [self._check], trials=7, min_pass=3) == 3
-        after_r1 = _runs(True, False, False)  # 1 pass, 2 fail
-        assert (
-            next_batch_size(after_r1, [self._check], trials=7, min_pass=3) == 2
-        )
-        after_r2 = _runs(True, False, False, True, False)  # 2 pass, 3 fail
-        assert (
-            next_batch_size(after_r2, [self._check], trials=7, min_pass=3) == 1
-        )
+    def test_fail_locked_check_short_circuits_others(self) -> None:
+        def check_text(run: EvalRun) -> None:
+            assert run.assistant_text, "text"
+
+        # skill_invoked 4/5 (undetermined) but assistant_text 0/5 (FAIL-locked):
+        # the eval already fails, so no further trials are run.
+        runs = [
+            EvalRun(eval_id="t", prompt="", skill_invoked=inv, assistant_text="")
+            for inv in [True, True, True, True, False]
+        ]
+        assert next_batch_size(runs, [_skill_check, check_text], 21, TARGET) == 0
 
 
 class TestRunEvalAdaptive:
     """The batch loop accumulates runs until `next_batch_size` returns 0."""
 
-    @staticmethod
-    def _check(run: EvalRun) -> None:
-        assert run.skill_invoked, "miss"
-
-    def test_loops_across_rounds_until_verdict(
+    def test_stops_once_pass_locked(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # Scripted per-trial outcomes consumed `count` at a time. With 3-of-7
-        # this drives three rounds (3, then 2, then 1) reaching 3 passes at
-        # the sixth run; the seventh scripted outcome is never needed.
-        scripted = [False, False, True, True, False, True, True]
+        # Every scripted trial passes: the opening floor of 3 runs, then a
+        # second batch tips the posterior over PASS_THRESHOLD and it stops.
+        scripted = [True] * 21
         state = {"i": 0}
 
         def fake_batch(
@@ -259,12 +416,34 @@ class TestRunEvalAdaptive:
             {"id": "t", "prompt": "p"},
             Path("."),
             "demo",
-            trials=7,
-            min_pass=3,
-            checks=[self._check],
+            max_trials=21,
+            target=TARGET,
+            checks=[_skill_check],
         )
-        assert len(runs) == 6
-        assert sum(run.skill_invoked for run in runs) == 3
+        # First batch is the floor (3); a clean streak then PASS-locks, so it
+        # stops well short of the 21-trial budget.
+        assert BATCH_FLOOR <= len(runs) < 21
+        assert all(run.skill_invoked for run in runs)
+
+    def test_stops_fast_when_failing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A skill that always misses: the opening floor of 3 FAIL-locks it.
+        def fake_batch(
+            item: dict, repo_root: Path, skill_name: str, count: int
+        ) -> list[EvalRun]:
+            return _runs(*([False] * count))
+
+        monkeypatch.setattr(eval_utils.grading, "run_claude_batch", fake_batch)
+        runs = eval_utils.run_eval_adaptive(
+            {"id": "t", "prompt": "p"},
+            Path("."),
+            "demo",
+            max_trials=21,
+            target=TARGET,
+            checks=[_skill_check],
+        )
+        assert len(runs) == BATCH_FLOOR
 
 
 class TestTriggerPassCounts:
@@ -286,7 +465,7 @@ class TestChecksSurviveOptimizedMode:
     """Guard the graded checks against regressing to bare `assert`.
 
     `trial_outcomes` grades each trial by catching `AssertionError`, so
-    `_trigger_check` and `assert_pass_rate` must keep raising even under
+    `_trigger_check` and `assert_eval_passed` must keep raising even under
     `python -O`, where `assert` statements are stripped from the bytecode.
     A bare `assert` would silently stop raising under `-O` and make every
     trial look like a pass. Each case runs in an `-O` subprocess (cwd set to
@@ -315,11 +494,11 @@ class TestChecksSurviveOptimizedMode:
         )
         assert proc.returncode == 0, proc.stdout + proc.stderr
 
-    def test_assert_pass_rate_raises_under_o(self) -> None:
+    def test_assert_eval_passed_raises_under_o(self) -> None:
         proc = self._raises_under_o(
             "import eval_utils as e\n"
             "try:\n"
-            "    e.assert_pass_rate([(0, 'bad')], min_pass=1, label='x')\n"
+            "    e.assert_eval_passed([(0, 'bad'), (1, 'bad')], 2/3, 'x')\n"
             "except AssertionError:\n"
             "    raise SystemExit(0)\n"
             "raise SystemExit('did not raise under -O')\n"
