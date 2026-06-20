@@ -14,7 +14,7 @@ stream-json transcript, and checks the response with grep-style assertions.
 Because the model is non-deterministic, each assertion has an unknown true
 pass rate `theta`; we estimate it Bayesianly from **repeated live runs** and
 the assertion passes when the posterior puts most of its mass at or above a
-target rate (default **2/3**). There is **no caching** — repeated trials are
+target rate (default **3/5**). There is **no caching** — repeated trials are
 the samples the posterior is built from.
 
 > Deterministic logic (your assertion helpers, regexes, parsing) belongs in
@@ -297,7 +297,7 @@ The model is a Beta-binomial: each assertion has an unknown true pass rate
 is `Beta(1 + k, 1 + (n - k))` (conjugate, so no sampling). `p_good` is the
 posterior mass at or above the target rate, `P(theta >= target)`.
 
-- `--live-eval-target-rate T` (default **2/3**): the true pass rate a good
+- `--live-eval-target-rate T` (default **3/5**): the true pass rate a good
   skill should clear. An assertion's final grade (`eval_passed`) is PASS when
   `p_good >= 0.5`.
 - `--live-eval-max-trials N` (default **21**): the budget ceiling. The verdict
@@ -322,19 +322,23 @@ are from Monte-Carlo simulation of the adaptive loop (budget 21, prior
 `Beta(1, 1)`); "false-FAIL" is a good skill wrongly failed, "caught" is a
 broken skill correctly failed.
 
-- **`TARGET_RATE = 2/3`.** The bar must sit *below* where good skills actually
+- **`TARGET_RATE = 3/5`.** The bar must sit *below* where good skills actually
   live (~0.9+), because asking the posterior to distinguish 0.90 from a bar
-  near it is both expensive and flaky. At 2/3 a true-0.90 skill false-fails
-  ~3% of the time (true-0.95: <1%) while a true-0.50 skill is caught ~94% and
-  true-0.40 ~99%. Pushing the bar to 0.7 roughly quadruples false reds on
-  0.9 skills; dropping it to 0.5 leaks mildly-broken skills (0.4–0.5) through.
-  2/3 is the knee of that trade — and "passes at least two of every three
-  attempts" is an easy bar to explain.
+  near it is both expensive and flaky. At 3/5 a true-0.90 skill false-fails
+  only ~0.2% of the time (true-0.80: ~3%), while clearly-broken skills are
+  still caught reliably (true-0.40 ~91%, true-0.30 ~100%). This deliberately
+  favours **never red-flagging a working skill** over catching *mildly*-broken
+  ones: a true-0.60 skill is caught only ~46% (vs ~79% at a 2/3 bar), on the
+  assumption that real regressions crater well below 0.6 and get fixed fast.
+  Raise the bar toward 2/3 if catching mild breakage matters more than CI
+  quiet. "Passes at least three of every five attempts" is an easy bar to
+  explain, and 0.6 sits just under the golden ratio (~0.618) that the
+  Fibonacci-ratio candidates we compared converge to.
 - **Band `(e^-2, 1 - e^-2)` ≈ (0.135, 0.865).** Symmetric about ½, so an early
   unlucky streak is as hard to lock a FAIL on as a lucky one is to lock a PASS.
-  `e^-2` is a natural "two-units-of-evidence" tail and pairs cleanly with the
-  2/3 target. Raising the low edge (e.g. to 0.5, a FAIL-eager asymmetric band)
-  was measured to ~10× the false-FAIL rate on good skills — rejected.
+  `e^-2` is a natural "two-units-of-evidence" tail. Raising the low edge (e.g.
+  to 0.5, a FAIL-eager asymmetric band) was measured to ~10× the false-FAIL
+  rate on good skills — rejected.
 - **`BATCH_FLOOR = 3`.** Not just a concurrency knob — it's a *stability* knob.
   Flooring the opening salvo at 3 forces a representative sample before the
   posterior may commit, which cut false-FAIL ~3× versus a floor of 1 (e.g.
@@ -368,7 +372,7 @@ From `skills/` (a `Makefile` wraps the common cases):
 make test                  # everything: unit tests then claude evals
 make test-unit             # fast unit tests for all skills, no API calls
 make test-shared           # just the shared eval_utils unit tests
-make eval                  # every skill's claude evals (target 2/3, <=21 runs)
+make eval                  # every skill's claude evals (target 3/5, <=21 runs)
 make eval-<skill-name>     # one skill's claude evals
 make eval TARGET_RATE=0.8 MAX_TRIALS=12
 ```

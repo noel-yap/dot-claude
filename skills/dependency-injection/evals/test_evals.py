@@ -13,7 +13,7 @@ For each entry in ``evals.json`` this module:
 Because the model is non-deterministic, each assertion is graded by a
 Beta-binomial posterior over its true pass rate: the assertion passes when
 the posterior puts most of its mass at or above ``--live-eval-target-rate``
-(default 2/3) rather than on a single draw.
+(default 3/5) rather than on a single draw.
 
 Three of the four evals reference samples that exhibit the DI smell —
 hardcoded module imports, hidden globals (Date.now / Math.random /

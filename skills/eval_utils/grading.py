@@ -10,7 +10,7 @@ on ``theta`` and ask how much of it clears a target rate.
     Beta is conjugate to the binomial, so the posterior is closed-form:
     ``theta | (k, n) ~ Beta(1 + k, 1 + (n - k))`` -- each batch of trials
     just bumps the two parameters, no sampling.
-  * Bar: ``TARGET_RATE`` (default 2/3) is the true pass rate a good skill
+  * Bar: ``TARGET_RATE`` (default 3/5) is the true pass rate a good skill
     should clear. ``posterior_pass_prob`` returns
     ``p_good = P(theta >= TARGET_RATE | k, n)`` via the regularized
     incomplete beta function (the Beta CDF), stdlib-only.

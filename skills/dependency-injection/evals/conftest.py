@@ -10,7 +10,7 @@ Run the full eval set with:
 
 Each assertion is graded by a Beta-binomial posterior over its true pass
 rate: it passes once the posterior puts most of its mass at or above
-`--live-eval-target-rate` (default 2/3). To save cost the runs are adaptive:
+`--live-eval-target-rate` (default 3/5). To save cost the runs are adaptive:
 trials run in concurrent batches and re-grade after each, stopping as soon
 as the posterior locks PASS or FAIL — capping cost at `--live-eval-max-trials`
 runs (default 21) while usually spending far fewer. To demand a higher true

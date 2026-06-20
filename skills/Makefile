@@ -14,14 +14,14 @@
 # Run from this directory (skills/). Examples:
 #   make test                 # everything: unit tests then claude evals
 #   make test-unit            # fast unit tests only, no API calls
-#   make eval                 # all skills' claude evals (target 2/3, <=21 runs)
+#   make eval                 # all skills' claude evals (target 3/5, <=21 runs)
 #   make eval-dependency-injection
 #   make eval TARGET_RATE=0.8 MAX_TRIALS=12
 #   make test-unit PYTEST_ARGS="-v"
 
 PYTEST      ?= python3 -m pytest
 MAX_TRIALS  ?= 21
-TARGET_RATE ?= 0.6667
+TARGET_RATE ?= 0.6
 PYTEST_ARGS ?=
 
 UNIT_FLAGS := -m "not live_eval"

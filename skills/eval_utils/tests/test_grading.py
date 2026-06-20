@@ -8,9 +8,10 @@ suites grade with (`trial_outcomes`, `assert_eval_passed`,
 skill-independent, so this logic is tested once here rather than duplicated
 per skill.
 
-Expected numbers below are for the shipped constants: TARGET defaults to
-2/3, the band is (e^-2, 1 - e^-2), the prior is Beta(1, 1), and
-`BATCH_FLOOR` is 3.
+Expected numbers below pin the mechanics against a fixed representative
+`TARGET` of 2/3 (deliberately independent of the shipped default, so a
+default retune cannot break these unit tests), with the band (e^-2, 1 - e^-2),
+the prior Beta(1, 1), and `BATCH_FLOOR` of 3.
 """
 
 from __future__ import annotations

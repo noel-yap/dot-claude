@@ -32,10 +32,11 @@ from eval_utils.stream_json import EvalRun
 DEFAULT_MAX_TRIALS = 21
 
 # The true pass rate a good skill should clear. The verdict asks how much
-# posterior mass sits at or above this. 2/3 ("passes at least two of every
-# three attempts") keeps false fails on genuinely-good skills (true rate
-# >= 0.9) tiny while still catching real regressions.
-DEFAULT_TARGET_RATE = 2.0 / 3.0
+# posterior mass sits at or above this. 3/5 ("passes at least three of every
+# five attempts") keeps false fails on genuinely-good skills very rare (true
+# rate >= 0.9 -> ~0.2%) while still catching clearly-broken skills; it favours
+# not red-flagging working skills over catching mildly-broken (~0.6) ones.
+DEFAULT_TARGET_RATE = 3.0 / 5.0
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
