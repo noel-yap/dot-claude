@@ -167,7 +167,7 @@ text wrangling.
 ```python
 from __future__ import annotations
 
-from _helpers import EvalRun
+from ._helpers import EvalRun
 from eval_utils import code_blocks, missing_from
 
 
@@ -191,20 +191,17 @@ ASSERTION_HANDLERS = {
 ### 4. `conftest.py` — wire the fixture
 
 Identical for every skill except the imports resolve to this skill's modules.
+Sibling modules are imported relatively (`from ._assertions import ...`);
+paired with `consider_namespace_packages` in `skills/pytest.ini` this keeps
+each skill's `_helpers` / `_assertions` namespaced, so several skills'
+eval dirs can be collected in one pytest session without colliding.
 
 ```python
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
-# Put this eval dir on sys.path so `_helpers` / `_assertions` import under
-# pytest's importlib mode.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-
-from _assertions import ASSERTION_HANDLERS          # noqa: E402
-from _helpers import EVALS_PATH, REPO_ROOT, SKILL_NAME  # noqa: E402
-from eval_utils import make_eval_runs_fixture      # noqa: E402
+from ._assertions import ASSERTION_HANDLERS
+from ._helpers import EVALS_PATH, REPO_ROOT, SKILL_NAME
+from eval_utils import make_eval_runs_fixture
 
 eval_runs = make_eval_runs_fixture(
     EVALS_PATH, REPO_ROOT, SKILL_NAME, ASSERTION_HANDLERS
@@ -230,8 +227,8 @@ import json
 
 import pytest
 
-from _assertions import ASSERTION_HANDLERS
-from _helpers import (
+from ._assertions import ASSERTION_HANDLERS
+from ._helpers import (
     EVALS_PATH, EvalRun, assert_eval_passed, failing_assertions,
     trial_outcomes, trigger_pass_counts,
 )

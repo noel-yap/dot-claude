@@ -35,8 +35,8 @@ from __future__ import annotations
 import json
 
 import pytest
-from _assertions import ASSERTION_HANDLERS
-from _helpers import (
+from ._assertions import ASSERTION_HANDLERS
+from ._helpers import (
     EVALS_PATH,
     EvalRun,
     assert_eval_passed,

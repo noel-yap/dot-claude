@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 
-from _helpers import SKILL_NAME, _is_skill_hit, parse_stream_json
+from ._helpers import SKILL_NAME, _is_skill_hit, parse_stream_json
 
 
 class TestParseStreamJsonWrapper:

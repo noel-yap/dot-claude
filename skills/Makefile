@@ -6,8 +6,10 @@
 # or above --live-eval-target-rate, over at most --live-eval-max-trials runs).
 # The two are split by the `live_eval` marker: unit targets select
 # `-m "not live_eval"`, eval targets select `-m live_eval`. The per-skill
-# eval dirs reuse the module names _helpers / _assertions, so they CANNOT be
-# collected in one pytest session — every target runs one eval dir at a time.
+# eval dirs reuse the module names _helpers / _assertions but no longer
+# collide: each evals dir is a namespace package whose siblings import
+# relatively (see skills/pytest.ini), so every target collects all skills in
+# one pytest session.
 #
 # Run from this directory (skills/). Examples:
 #   make test                 # everything: unit tests then claude evals
@@ -46,19 +48,13 @@ help: ## Show this help
 test: test-unit eval ## Run everything: unit tests then claude evals (real model calls)
 
 test-unit: test-shared ## Run shared + every skill's unit tests (excludes live_eval)
-	@for d in $(SKILL_DIRS); do \
-	  echo "== unit: $$d =="; \
-	  $(PYTEST) "$$d" $(UNIT_FLAGS) $(PYTEST_ARGS) || exit $$?; \
-	done
+	$(PYTEST) $(SKILL_DIRS) $(UNIT_FLAGS) $(PYTEST_ARGS)
 
 test-shared: ## Run the shared eval_utils package unit tests
 	$(PYTEST) eval_utils/tests $(PYTEST_ARGS)
 
 eval: ## Run every skill's claude evals (real model calls; set MAX_TRIALS/TARGET_RATE)
-	@for d in $(SKILL_DIRS); do \
-	  echo "== eval: $$d =="; \
-	  $(PYTEST) "$$d" $(EVAL_FLAGS) $(PYTEST_ARGS) || exit $$?; \
-	done
+	$(PYTEST) $(SKILL_DIRS) $(EVAL_FLAGS) $(PYTEST_ARGS)
 
 eval-%: ## Run claude evals for one skill: make eval-<skill>
 	$(PYTEST) "$*/evals" $(EVAL_FLAGS) $(PYTEST_ARGS)

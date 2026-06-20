@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from _assertions import (
+from ._assertions import (
     _adds_deps_param_to_pure_fn,
     _adds_test_code,
     _all_leaks_in_block,
@@ -31,7 +31,7 @@ from _assertions import (
     assert_sut_has_no_bare_globals,
     assert_sut_has_no_bare_module_refs,
 )
-from _helpers import EvalRun
+from ._helpers import EvalRun
 
 
 def _run(text: str, skill_invoked: bool = False) -> EvalRun:

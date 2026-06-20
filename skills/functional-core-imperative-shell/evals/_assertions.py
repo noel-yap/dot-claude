@@ -5,7 +5,7 @@ from __future__ import annotations
 import itertools
 import re
 
-from _helpers import EvalRun
+from ._helpers import EvalRun
 
 from eval_utils import (
     ARROW_FN_RE,

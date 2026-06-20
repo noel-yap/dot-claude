@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from _assertions import (
+from ._assertions import (
     _block_has_kind_discriminator,
     _candidate_pure_blocks,
     _code_blocks,
@@ -20,7 +20,7 @@ from _assertions import (
     assert_pure_core_no_io,
     assert_skill_not_invoked,
 )
-from _helpers import EvalRun
+from ._helpers import EvalRun
 
 
 class TestCodeBlocks:

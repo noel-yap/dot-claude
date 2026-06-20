@@ -23,25 +23,19 @@ Evals are non-deterministic by design and are never cached: every trial is
 a fresh live `claude -p` call so the suite measures run-to-run variance.
 Deterministic checks belong in the per-skill unit suites, not here.
 
-Run ONE skill's eval dir at a time: every skill's evals reuse the module
-names `_helpers` / `_assertions`, so pointing pytest at two eval dirs in
-a single session collides in `sys.modules`.
+Multiple skills' eval dirs can be collected in one pytest session: each
+`evals` dir is a namespace package (no `__init__.py`) and its sibling
+modules are imported relatively (`from ._helpers import ...`), so
+`_helpers` / `_assertions` are namespaced per skill rather than colliding
+in `sys.modules`. See `skills/pytest.ini` (`consider_namespace_packages`).
 """
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
+from ._assertions import ASSERTION_HANDLERS
+from ._helpers import EVALS_PATH, REPO_ROOT, SKILL_NAME
 
-# Put this eval dir on sys.path so `_helpers` / `_assertions` import under
-# pytest's importlib mode (which, unlike prepend mode, does not add the
-# conftest's own directory).
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-
-from _assertions import ASSERTION_HANDLERS  # noqa: E402
-from _helpers import EVALS_PATH, REPO_ROOT, SKILL_NAME  # noqa: E402
-
-from eval_utils import make_eval_runs_fixture  # noqa: E402
+from eval_utils import make_eval_runs_fixture
 
 eval_runs = make_eval_runs_fixture(
     EVALS_PATH, REPO_ROOT, SKILL_NAME, ASSERTION_HANDLERS
