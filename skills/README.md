@@ -1,9 +1,18 @@
 # Skill evals
 
-This directory holds the **eval harness** shared by every skill plus one
-eval suite per skill. The `eval_utils` package is the skill-independent
-core; each skill adds a thin `evals/` package that binds the harness to its
-own skill name, sample files, and assertions.
+This directory holds one eval suite per skill, built on the
+[**binom-eval**](https://github.com/noel-yap/binom-eval) package — the
+skill-independent harness (Beta-binomial grading, the `claude -p` runner, the
+stream-json parser, and a pytest plugin). Each skill adds a thin `evals/`
+package that binds the harness to its own skill name, sample files, and
+assertions.
+
+`binom-eval` is a dependency, pinned in `requirements.txt`. Install it before
+running anything:
+
+```bash
+make install   # uv pip install -r requirements.txt
+```
 
 This README explains how to stand up an eval suite for a **new skill**.
 
@@ -11,48 +20,36 @@ This README explains how to stand up an eval suite for a **new skill**.
 
 An eval runs the real `claude -p` CLI against a prompt, captures the
 stream-json transcript, and checks the response with grep-style assertions.
-Because the model is non-deterministic, each assertion has an unknown true
-pass rate `theta`; we estimate it Bayesianly from **repeated live runs** and
-the assertion passes when the posterior puts most of its mass at or above a
-target rate (default **3/5**). There is **no caching** — repeated trials are
-the samples the posterior is built from.
+The statistics behind the verdict — the Beta-binomial posterior, the target
+rate, the adaptive trial loop — are binom-eval's job and are documented in
+[its README](https://github.com/noel-yap/binom-eval); here we only cover what
+a skill author has to write.
 
 > Deterministic logic (your assertion helpers, regexes, parsing) belongs in
 > ordinary unit tests, **not** in evals. Evals are only for "does the model,
 > with this skill available, actually do the right thing often enough?"
 >
 > Evals are **expensive**: each trial is a real `claude -p` invocation that
-> costs API tokens (and money) and takes seconds to minutes, and every eval
-> runs up to `--live-eval-max-trials` times (default 21). That is why they
-> are isolated behind the `live_eval` marker (run only via `-m live_eval` /
-> the `make eval` targets, never by the unit targets), why the harness runs
-> trials adaptively (stopping as soon as the posterior locks PASS or FAIL)
-> and concurrently, and why you should keep the eval set small and
-> high-signal — a clearly-good or clearly-broken skill settles in a handful
-> of trials, and anything checkable without the model belongs in the
+> costs API tokens (and money) and takes seconds to minutes. They are isolated
+> behind the `live_eval` marker (run only via `-m live_eval` / the `make eval`
+> targets, never by the unit targets), so keep the eval set small and
+> high-signal — anything checkable without the model belongs in the
 > deterministic unit tests.
 
-## How the `eval_utils` package fits together
+## How the `binom_eval` package fits together
 
-`eval_utils` is a package whose `__init__` re-exports everything below, so
-you always `from eval_utils import ...` regardless of which submodule a name
-lives in. It provides, as plain functions (no per-skill state):
+`binom_eval` re-exports everything from its `__init__`, so you always
+`from binom_eval import ...` regardless of which submodule a name lives in. The
+full list of exported symbols is in binom-eval's
+[Public API table](https://github.com/noel-yap/binom-eval#public-api); the
+names a skill actually touches appear in the templates below.
 
-| Area | Submodule | What you use |
-| --- | --- | --- |
-| Run + parse | `runner`, `stream_json` | `run_claude`, `run_claude_batch`, `parse_stream_json`, `EvalRun` |
-| Bayesian verdict | `grading` | `posterior_pass_prob`, `eval_passed` |
-| Adaptive grading loop | `grading` | `run_eval_adaptive`, `next_batch_size` |
-| Per-assertion scoring | `grading` | `trial_outcomes`, `assert_eval_passed`, `failing_assertions`, `trigger_pass_counts` |
-| Assertion text helpers | `text_utils` | `code_blocks`, `first_line`, `missing_from` |
-| pytest wiring | `plugin` | `pytest_addoption`, `pytest_configure`, `live_eval_target_rate`, `make_eval_runs_fixture` |
-
-The pytest hooks and the `live_eval_target_rate` fixture are re-exported once
-from the parent `skills/conftest.py`, so the `--live-eval-max-trials` /
-`--live-eval-target-rate` options and the `live_eval` marker are registered
-for the whole tree. **A new skill never
-touches the `eval_utils` package or `skills/conftest.py`** — it only adds
-files under its own `evals/`.
+The pytest hooks and the `live_eval_target_rate` fixture are registered
+automatically by the installed `binom-eval` package (a pytest plugin via its
+`pytest11` entry point), so the `--live-eval-max-trials` /
+`--live-eval-target-rate` options and the `live_eval` marker are available
+across the whole tree with no conftest wiring. **A new skill never touches the
+`binom_eval` package** — it only adds files under its own `evals/`.
 
 The one entry point a skill calls directly is **`make_eval_runs_fixture`**,
 which builds the session-scoped `eval_runs` fixture that runs claude for
@@ -66,7 +63,7 @@ skills/<skill-name>/
     ├── evals.json        # the eval cases + per-eval assertion ids
     ├── samples/          # input files the prompts point at
     │   └── *.ts
-    ├── _helpers.py       # binds SKILL_NAME + paths, re-exports from eval_utils
+    ├── _helpers.py       # binds SKILL_NAME + paths, re-exports from binom_eval
     ├── _assertions.py    # assertion functions + ASSERTION_HANDLERS registry
     ├── conftest.py       # wires the `eval_runs` fixture
     ├── test_evals.py     # the live evals (marked `live_eval`; run via -m live_eval)
@@ -125,7 +122,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from eval_utils import (
+from binom_eval import (
     EvalRun,
     assert_eval_passed,
     failing_assertions,
@@ -133,7 +130,7 @@ from eval_utils import (
     trial_outcomes,
     trigger_pass_counts,
 )
-from eval_utils import _is_skill_hit as _shared_is_skill_hit
+from binom_eval import _is_skill_hit as _shared_is_skill_hit
 
 EVAL_DIR = Path(__file__).resolve().parent
 REPO_ROOT = EVAL_DIR.parents[3]
@@ -161,14 +158,14 @@ __all__ = [
 Each handler takes a `EvalRun` and **raises `AssertionError`** on failure
 (its message becomes the per-trial failure detail). Register every handler in
 an `ASSERTION_HANDLERS` dict keyed by the `assertion.id` from `evals.json`.
-Use `code_blocks`, `first_line`, and `missing_from` from `eval_utils` for
+Use `code_blocks`, `first_line`, and `missing_from` from `binom_eval` for
 text wrangling.
 
 ```python
 from __future__ import annotations
 
 from ._helpers import EvalRun
-from eval_utils import code_blocks, missing_from
+from binom_eval import code_blocks, missing_from
 
 
 def assert_does_the_thing(run: EvalRun) -> None:
@@ -201,7 +198,7 @@ from __future__ import annotations
 
 from ._assertions import ASSERTION_HANDLERS
 from ._helpers import EVALS_PATH, REPO_ROOT, SKILL_NAME
-from eval_utils import make_eval_runs_fixture
+from binom_eval import make_eval_runs_fixture
 
 eval_runs = make_eval_runs_fixture(
     EVALS_PATH, REPO_ROOT, SKILL_NAME, ASSERTION_HANDLERS
@@ -218,7 +215,7 @@ as soon as the posterior locks PASS or FAIL, yielding
 Two tests, both marked `live_eval` (so the unit targets exclude them via
 `-m "not live_eval"` and the eval targets select them via `-m live_eval`).
 The target pass rate comes from the `live_eval_target_rate` fixture
-(re-exported by the parent conftest).
+(provided by the `binom-eval` plugin).
 
 ```python
 from __future__ import annotations
@@ -268,7 +265,7 @@ class TestClaudeEvals:
         eval_runs: dict[str, list[EvalRun]],
         live_eval_target_rate: float,
     ) -> None:
-        from eval_utils import eval_passed
+        from binom_eval import eval_passed
 
         counts = trigger_pass_counts(eval_runs, self._evals())
         failures = [
@@ -287,82 +284,19 @@ class TestClaudeEvals:
   hand-written `EvalRun(assistant_text=...)` fixtures covering pass and
   fail cases. This is where the *deterministic* coverage lives.
 - **`test_helpers.py`** — verify your `_helpers.py` wrappers bind the right
-  `SKILL_NAME` (the shared functions are already tested in
-  `skills/eval_utils/tests/`, so don't re-test them).
+  `SKILL_NAME` (the shared functions are already tested in the binom-eval
+  package's own suite, so don't re-test them).
 
 ## How grading works
 
-The model is a Beta-binomial: each assertion has an unknown true pass rate
-`theta`; with a `Beta(1, 1)` prior and `k` passes of `n` trials the posterior
-is `Beta(1 + k, 1 + (n - k))` (conjugate, so no sampling). `p_good` is the
-posterior mass at or above the target rate, `P(theta >= target)`.
-
-- `--live-eval-target-rate T` (default **3/5**): the true pass rate a good
-  skill should clear. An assertion's final grade (`eval_passed`) is PASS when
-  `p_good >= 0.5`.
-- `--live-eval-max-trials N` (default **21**): the budget ceiling. The verdict
-  usually locks long before this; it only bites for a skill sitting right at
-  the target rate, which is genuinely undecidable.
-- Trials run **adaptively** (`next_batch_size` → `run_eval_adaptive`). After
-  each concurrent batch the posterior is re-checked against a symmetric band:
-  PASS once `p_good > 1 - e^-2` (~0.865), FAIL once `p_good < e^-2` (~0.135),
-  keep sampling in between. Batches are sized to the fewest trials that could
-  settle the worst still-open check, floored at `BATCH_FLOOR` (3) so early
-  rounds fan out and an unlucky streak can't lock a verdict. A clearly-good or
-  clearly-broken skill settles in a handful of trials.
-
-### Why these defaults
-
-The defaults are tuned for the expected workload: **most eval runs are of
-working skills in CI** (a broken skill gets fixed fast, so it's rarely the
-thing under test). That makes the dominant failure mode a *false red* — a
-working skill that the build rejects by chance — so the parameters are chosen
-to keep that rare while still catching real regressions. The numbers below
-are from Monte-Carlo simulation of the adaptive loop (budget 21, prior
-`Beta(1, 1)`); "false-FAIL" is a good skill wrongly failed, "caught" is a
-broken skill correctly failed.
-
-- **`TARGET_RATE = 3/5`.** The bar must sit *below* where good skills actually
-  live (~0.9+), because asking the posterior to distinguish 0.90 from a bar
-  near it is both expensive and flaky. At 3/5 a true-0.90 skill false-fails
-  only ~0.2% of the time (true-0.80: ~3%), while clearly-broken skills are
-  still caught reliably (true-0.40 ~91%, true-0.30 ~100%). This deliberately
-  favours **never red-flagging a working skill** over catching *mildly*-broken
-  ones: a true-0.60 skill is caught only ~46% (vs ~79% at a 2/3 bar), on the
-  assumption that real regressions crater well below 0.6 and get fixed fast.
-  Raise the bar toward 2/3 if catching mild breakage matters more than CI
-  quiet. "Passes at least three of every five attempts" is an easy bar to
-  explain, and 0.6 sits just under the golden ratio (~0.618) that the
-  Fibonacci-ratio candidates we compared converge to.
-- **Band `(e^-2, 1 - e^-2)` ≈ (0.135, 0.865).** Symmetric about ½, so an early
-  unlucky streak is as hard to lock a FAIL on as a lucky one is to lock a PASS.
-  `e^-2` is a natural "two-units-of-evidence" tail. Raising the low edge (e.g.
-  to 0.5, a FAIL-eager asymmetric band) was measured to ~10× the false-FAIL
-  rate on good skills — rejected.
-- **`BATCH_FLOOR = 3`.** Not just a concurrency knob — it's a *stability* knob.
-  Flooring the opening salvo at 3 forces a representative sample before the
-  posterior may commit, which cut false-FAIL ~3× versus a floor of 1 (e.g.
-  12% → 4% at target 0.7, true 0.9) for ~2 extra trials. A floor of 2 was
-  strictly worse (same cost, less benefit, and it could *raise* round counts);
-  5 bought marginal speed at near-max trial cost. 3 is the sweet spot.
-- **`MAX_TRIALS = 21`.** A ceiling, not a target: good skills lock in ~2–3
-  rounds (~6–9 trials) and never approach it. It only bites for a skill
-  sitting *exactly* at the bar, which is genuinely undecidable — one more
-  trial can't rescue it. 21 = 3 × 7 divides evenly by `BATCH_FLOOR`, so the
-  worst case is a clean seven rounds of three with no ragged final batch. The
-  budget is the least sensitive parameter here (20 vs 21 was within noise).
-- **Prior `Beta(1, 1)` (uniform).** No prior opinion on a skill's pass rate —
-  the verdict is driven by the trials, not by a thumb on the scale. Raise
-  `PRIOR_ALPHA` for an optimistic prior ("skills usually work, demand less
-  evidence") or `PRIOR_BETA` for a skeptical one.
-- **Budget tiebreak at `p_good >= 0.5`.** If a run exhausts the budget still
-  inside the band, it's graded toward whichever side holds the majority of the
-  posterior. This only matters for at-the-bar skills (everything else locks via
-  the band first); 0.5 is the principled midpoint.
-
-All of these are per-run overridable from the CLI / Makefile (`TARGET_RATE`,
-`MAX_TRIALS`); the band, floor, prior, and tiebreak are module constants in
-`eval_utils.grading` — change them there if the workload assumptions shift.
+The verdict is a Beta-binomial posterior over each assertion's true pass rate,
+graded adaptively against a target rate (default **3/5**) over a trial budget
+(default **21**). The model, the verdict band, and the reasoning behind every
+default (`TARGET_RATE`, `MAX_TRIALS`, `BATCH_FLOOR`, the band, the prior, the
+tiebreak) are documented in binom-eval's
+[**Why these defaults**](https://github.com/noel-yap/binom-eval#why-these-defaults)
+section. `TARGET_RATE` and `MAX_TRIALS` are overridable per run from the CLI /
+Makefile (below); the rest are module constants in `binom_eval.grading`.
 
 ## Running
 
@@ -371,7 +305,6 @@ From `skills/` (a `Makefile` wraps the common cases):
 ```sh
 make test                  # everything: unit tests then claude evals
 make test-unit             # fast unit tests for all skills, no API calls
-make test-shared           # just the shared eval_utils unit tests
 make eval                  # every skill's claude evals (target 3/5, <=21 runs)
 make eval-<skill-name>     # one skill's claude evals
 make eval TARGET_RATE=0.8 MAX_TRIALS=12

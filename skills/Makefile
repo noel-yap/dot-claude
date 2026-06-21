@@ -11,7 +11,13 @@
 # relatively (see skills/pytest.ini), so every target collects all skills in
 # one pytest session.
 #
+# The grading, runner, stream-json parser, and the pytest plugin (the
+# `--live-eval-*` options, the `live_eval` marker, and the
+# `live_eval_target_rate` fixture) come from the installed `binom-eval`
+# package, pinned in requirements.txt. Run `make install` first.
+#
 # Run from this directory (skills/). Examples:
+#   make install              # install pinned binom-eval into the active env
 #   make test                 # everything: unit tests then claude evals
 #   make test-unit            # fast unit tests only, no API calls
 #   make eval                 # all skills' claude evals (target 3/5, <=21 runs)
@@ -19,10 +25,20 @@
 #   make eval TARGET_RATE=0.8 MAX_TRIALS=12
 #   make test-unit PYTEST_ARGS="-v"
 
-PYTEST      ?= python3 -m pytest
+PYTHON      ?= python3
+PYTEST      ?= $(PYTHON) -m pytest
+PIP         ?= uv pip install
 MAX_TRIALS  ?= 21
 TARGET_RATE ?= 0.6
 PYTEST_ARGS ?=
+
+# Stamp file recording a successful install. Depends on requirements.txt, so
+# `install` re-runs only when the pins change; test targets depend on the
+# stamp so they install on demand without reinstalling every time. The stamp
+# is keyed to a stable hash of the active interpreter's sys.prefix, so each
+# virtualenv gets its own stamp and switching envs forces a reinstall.
+ENV_ID        := $(shell $(PYTHON) -c 'import sys,hashlib; print(hashlib.sha1(sys.prefix.encode()).hexdigest()[:12])')
+INSTALL_STAMP := .install.$(ENV_ID).stamp
 
 UNIT_FLAGS := -m "not live_eval"
 EVAL_FLAGS := -m live_eval --live-eval-max-trials $(MAX_TRIALS) --live-eval-target-rate $(TARGET_RATE)
@@ -34,7 +50,7 @@ SKILLS := $(patsubst %/evals,%,$(SKILL_DIRS))
 
 .DEFAULT_GOAL := help
 
-.PHONY: help test test-shared test-unit eval clean
+.PHONY: help install test test-unit eval clean
 
 help: ## Show this help
 	@echo "Skill eval suite targets:"
@@ -45,20 +61,24 @@ help: ## Show this help
 	@echo "Discovered skills:      $(SKILLS)"
 	@echo "Vars: MAX_TRIALS=$(MAX_TRIALS) TARGET_RATE=$(TARGET_RATE) PYTEST_ARGS='$(PYTEST_ARGS)'"
 
+install: $(INSTALL_STAMP) ## Install the pinned binom-eval (+pytest) into the active environment
+
+$(INSTALL_STAMP): requirements.txt
+	$(PIP) -r requirements.txt
+	@touch $@
+
 test: test-unit eval ## Run everything: unit tests then claude evals (real model calls)
 
-test-unit: test-shared ## Run shared + every skill's unit tests (excludes live_eval)
+test-unit: $(INSTALL_STAMP) ## Run every skill's unit tests (excludes live_eval)
 	$(PYTEST) $(SKILL_DIRS) $(UNIT_FLAGS) $(PYTEST_ARGS)
 
-test-shared: ## Run the shared eval_utils package unit tests
-	$(PYTEST) eval_utils/tests $(PYTEST_ARGS)
-
-eval: ## Run every skill's claude evals (real model calls; set MAX_TRIALS/TARGET_RATE)
+eval: $(INSTALL_STAMP) ## Run every skill's claude evals (real model calls; set MAX_TRIALS/TARGET_RATE)
 	$(PYTEST) $(SKILL_DIRS) $(EVAL_FLAGS) $(PYTEST_ARGS)
 
-eval-%: ## Run claude evals for one skill: make eval-<skill>
+eval-%: $(INSTALL_STAMP) ## Run claude evals for one skill: make eval-<skill>
 	$(PYTEST) "$*/evals" $(EVAL_FLAGS) $(PYTEST_ARGS)
 
-clean: ## Remove pytest / __pycache__ caches under skills/
+clean: ## Remove the install stamp and pytest / __pycache__ caches under skills/
+	rm -f .install.*.stamp
 	find . -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true
 	find . -type d -name .pytest_cache -prune -exec rm -rf {} + 2>/dev/null || true

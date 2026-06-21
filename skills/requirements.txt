@@ -1,0 +1,10 @@
+# Skill eval-suite dependencies.
+#
+# binom-eval supplies the Beta-binomial grading, the `claude -p` runner, the
+# stream-json parser, and the pytest plugin (the `--live-eval-*` options, the
+# `live_eval` marker, and the `live_eval_target_rate` fixture). Installing it
+# registers that plugin via its `pytest11` entry point, so no conftest sys.path
+# wiring is needed for the eval machinery.
+#
+# Pinned to a git tag for reproducibility. Bump the tag to upgrade.
+binom-eval @ git+https://github.com/noel-yap/binom-eval@v0.1.0

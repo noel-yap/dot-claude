@@ -26,3 +26,6 @@ telemetry/
 # Python cache (OSSF Scorecard BinaryArtifacts)
 __pycache__/
 *.pyc
+
+# Make install stamps (skills/ eval suite; one per virtualenv)
+skills/.install.*.stamp

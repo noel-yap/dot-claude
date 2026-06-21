@@ -7,10 +7,8 @@ import re
 
 from ._helpers import EvalRun
 
-from eval_utils import (
+from binom_eval import (
     code_blocks as _code_blocks,
-)
-from eval_utils import (
     first_line as _first_line,
 )
 

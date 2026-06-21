@@ -7,17 +7,11 @@ import re
 
 from ._helpers import EvalRun
 
-from eval_utils import (
+from binom_eval import (
     ARROW_FN_RE,
     NAMED_FN_RE,
-)
-from eval_utils import (
     code_blocks as _code_blocks,
-)
-from eval_utils import (
     first_line as _first_line,
-)
-from eval_utils import (
     missing_from as _missing_from,
 )
 

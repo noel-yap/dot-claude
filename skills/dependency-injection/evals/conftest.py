@@ -1,7 +1,7 @@
 """Pytest config for dependency-injection skill Claude evals.
 
 The `--live-eval-max-trials` / `--live-eval-target-rate` options and the
-`live_eval` marker are registered once at the parent `skills/conftest.py`.
+`live_eval` marker are registered by the installed `binom-eval` pytest plugin.
 This file only wires the session-scoped `eval_runs` fixture for this skill.
 
 Run the full eval set with:
@@ -35,7 +35,7 @@ from __future__ import annotations
 from ._assertions import ASSERTION_HANDLERS
 from ._helpers import EVALS_PATH, REPO_ROOT, SKILL_NAME
 
-from eval_utils import make_eval_runs_fixture
+from binom_eval import make_eval_runs_fixture
 
 eval_runs = make_eval_runs_fixture(
     EVALS_PATH, REPO_ROOT, SKILL_NAME, ASSERTION_HANDLERS

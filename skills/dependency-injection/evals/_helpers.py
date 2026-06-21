@@ -2,12 +2,12 @@
 
 Owns the path constants (`EVAL_DIR`, `REPO_ROOT`, `EVALS_PATH`) and derives
 the skill identity (`SKILL_NAME`) from the skill directory, and re-exports
-the handful of shared helpers this suite's tests use from `skills/eval_utils`
+the handful of shared helpers this suite's tests use from the installed `binom_eval` package
 so the behaviour stays in one place.
 
 `parse_stream_json` and `_is_skill_hit` are wrapped so callers can call
 them with just the stream payload; the wrappers supply `SKILL_NAME`. The
-skill-independent helpers are unit-tested once in `skills/eval_utils/tests/`.
+skill-independent helpers are unit-tested once in the `binom-eval` package.
 """
 
 from __future__ import annotations
@@ -15,15 +15,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from eval_utils import (
+from binom_eval import (
     EvalRun,
     assert_eval_passed,
     failing_assertions,
     trial_outcomes,
     trigger_pass_counts,
-)
-from eval_utils import _is_skill_hit as _shared_is_skill_hit
-from eval_utils import (
+    _is_skill_hit as _shared_is_skill_hit,
     parse_stream_json as _parse_stream_json,
 )
 

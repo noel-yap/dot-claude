@@ -1,7 +1,7 @@
 """Unit tests for the SKILL_NAME-bound wrappers in `_helpers.py`.
 
-The skill-independent helpers these delegate to live in `eval_utils` and
-are tested once in `skills/eval_utils/tests/`. Here we only verify that
+The skill-independent helpers these delegate to live in `binom_eval` and
+are tested once in the `binom-eval` package. Here we only verify that
 this suite's wrappers bind the correct `SKILL_NAME`.
 """
 

@@ -44,7 +44,7 @@ from ._helpers import (
     trial_outcomes,
     trigger_pass_counts,
 )
-from eval_utils import eval_passed
+from binom_eval import eval_passed
 
 
 class TestClaudeEvals:
