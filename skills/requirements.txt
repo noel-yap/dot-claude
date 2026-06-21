@@ -8,3 +8,10 @@
 #
 # Pinned to a git tag for reproducibility. Bump the tag to upgrade.
 binom-eval @ git+https://github.com/noel-yap/binom-eval@v0.1.0
+
+# pytest-xdist distributes the eval tests across worker processes. With
+# `--dist loadscope` each skill's `TestClaudeEvals` class is one scope, so the
+# skills run in parallel (one worker each) while every skill's session-scoped
+# `eval_runs` fixture is still built exactly once on its own worker. See the
+# `eval` target in the Makefile.
+pytest-xdist==3.8.0

@@ -71,10 +71,15 @@ skills/<skill-name>/
     └── test_helpers.py   # unit tests for the SKILL_NAME-bound wrappers
 ```
 
-> **Important:** every skill's `evals/` reuses the module names `_helpers`
-> and `_assertions`. pytest cannot collect two skills' eval dirs in one
-> session without a `sys.modules` collision — always run **one skill's eval
-> dir at a time** (the `Makefile` targets do this for you).
+> **Note:** every skill's `evals/` reuses the module names `_helpers` and
+> `_assertions`. They no longer collide: `skills/pytest.ini` sets
+> `--import-mode=importlib` with `consider_namespace_packages = true`, and the
+> sibling imports are relative (`from ._helpers import ...`), so pytest names
+> each skill's modules by their full path (`<skill>.evals._helpers`) instead of
+> a bare `_helpers` key in `sys.modules`. Several skills' eval dirs are
+> therefore collected in **one** pytest session, and the `Makefile`'s `eval`
+> target fans them out across pytest-xdist workers (`--dist loadscope`, one
+> worker per skill) to run in parallel.
 
 ## Step by step
 
@@ -305,12 +310,20 @@ From `skills/` (a `Makefile` wraps the common cases):
 ```sh
 make test                  # everything: unit tests then claude evals
 make test-unit             # fast unit tests for all skills, no API calls
-make eval                  # every skill's claude evals (target 3/5, <=21 runs)
+make eval                  # every skill's claude evals, in parallel (target 3/5, <=21 runs)
 make eval-<skill-name>     # one skill's claude evals
 make eval TARGET_RATE=0.8 MAX_TRIALS=12
+make eval JOBS=2           # cap the xdist worker count
 ```
 
-Or call pytest directly (always **one** eval dir at a time). The
+`make eval` runs the skills concurrently via pytest-xdist (`--dist loadscope`,
+one worker per skill); `JOBS` (default `auto`) caps the workers. Effective
+parallelism is `min(JOBS, #skills)`, so worst-case in-flight `claude -p` calls
+is roughly that many workers times the adaptive batch size — lower `JOBS` if
+you need to stay under an API rate limit.
+
+Or call pytest directly. Several skills' eval dirs can be collected in one
+session, but to add xdist yourself pass `-n <N> --dist loadscope`. The
 `live_eval` marker is the unit/eval split:
 
 ```sh

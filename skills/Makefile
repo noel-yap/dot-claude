@@ -9,7 +9,9 @@
 # eval dirs reuse the module names _helpers / _assertions but no longer
 # collide: each evals dir is a namespace package whose siblings import
 # relatively (see skills/pytest.ini), so every target collects all skills in
-# one pytest session.
+# one pytest session. The `eval` target then fans those skills out across
+# pytest-xdist workers (`--dist loadscope`, one worker per skill) so they run
+# in parallel; tune the worker count with JOBS.
 #
 # The grading, runner, stream-json parser, and the pytest plugin (the
 # `--live-eval-*` options, the `live_eval` marker, and the
@@ -20,9 +22,10 @@
 #   make install              # install pinned binom-eval into the active env
 #   make test                 # everything: unit tests then claude evals
 #   make test-unit            # fast unit tests only, no API calls
-#   make eval                 # all skills' claude evals (target 3/5, <=21 runs)
+#   make eval                 # all skills' claude evals in parallel (target 3/5, <=21 runs)
 #   make eval-dependency-injection
 #   make eval TARGET_RATE=0.8 MAX_TRIALS=12
+#   make eval JOBS=2          # cap the xdist worker count
 #   make test-unit PYTEST_ARGS="-v"
 
 PYTHON      ?= python3
@@ -30,6 +33,12 @@ PYTEST      ?= $(PYTHON) -m pytest
 PIP         ?= uv pip install
 MAX_TRIALS  ?= 21
 TARGET_RATE ?= 0.6
+# Worker count for the multi-skill `eval` target (pytest-xdist `-n`). `auto`
+# uses one worker per CPU, but `--dist loadscope` only ever schedules as many
+# as there are skills, so effective parallelism is min(JOBS, #skills). Set a
+# number to cap concurrent `claude -p` processes: worst case in-flight calls is
+# roughly that many workers times the adaptive batch size.
+JOBS        ?= auto
 PYTEST_ARGS ?=
 
 # Stamp file recording a successful install. Depends on requirements.txt, so
@@ -42,6 +51,11 @@ INSTALL_STAMP := .install.$(ENV_ID).stamp
 
 UNIT_FLAGS := -m "not live_eval"
 EVAL_FLAGS := -m live_eval --live-eval-max-trials $(MAX_TRIALS) --live-eval-target-rate $(TARGET_RATE)
+# `loadscope` groups by test class, so each skill's TestClaudeEvals lands on a
+# single worker -- skills run in parallel without rebuilding any skill's
+# session-scoped eval_runs fixture more than once. Only the multi-skill `eval`
+# target uses this; `eval-<skill>` is a single scope and gains nothing.
+XDIST_FLAGS := -n $(JOBS) --dist loadscope
 
 # Eval dirs discovered from the tree, e.g. "dependency-injection/evals".
 SKILL_DIRS := $(patsubst %/,%,$(dir $(wildcard */evals/evals.json)))
@@ -59,7 +73,7 @@ help: ## Show this help
 	@echo ""
 	@echo "Per-skill claude evals: make eval-<skill>"
 	@echo "Discovered skills:      $(SKILLS)"
-	@echo "Vars: MAX_TRIALS=$(MAX_TRIALS) TARGET_RATE=$(TARGET_RATE) PYTEST_ARGS='$(PYTEST_ARGS)'"
+	@echo "Vars: MAX_TRIALS=$(MAX_TRIALS) TARGET_RATE=$(TARGET_RATE) JOBS=$(JOBS) PYTEST_ARGS='$(PYTEST_ARGS)'"
 
 install: $(INSTALL_STAMP) ## Install the pinned binom-eval (+pytest) into the active environment
 
@@ -72,8 +86,8 @@ test: test-unit eval ## Run everything: unit tests then claude evals (real model
 test-unit: $(INSTALL_STAMP) ## Run every skill's unit tests (excludes live_eval)
 	$(PYTEST) $(SKILL_DIRS) $(UNIT_FLAGS) $(PYTEST_ARGS)
 
-eval: $(INSTALL_STAMP) ## Run every skill's claude evals (real model calls; set MAX_TRIALS/TARGET_RATE)
-	$(PYTEST) $(SKILL_DIRS) $(EVAL_FLAGS) $(PYTEST_ARGS)
+eval: $(INSTALL_STAMP) ## Run every skill's claude evals in parallel (real model calls; set MAX_TRIALS/TARGET_RATE/JOBS)
+	$(PYTEST) $(SKILL_DIRS) $(EVAL_FLAGS) $(XDIST_FLAGS) $(PYTEST_ARGS)
 
 eval-%: $(INSTALL_STAMP) ## Run claude evals for one skill: make eval-<skill>
 	$(PYTEST) "$*/evals" $(EVAL_FLAGS) $(PYTEST_ARGS)
