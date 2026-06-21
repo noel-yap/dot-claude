@@ -77,9 +77,9 @@ skills/<skill-name>/
 > sibling imports are relative (`from ._helpers import ...`), so pytest names
 > each skill's modules by their full path (`<skill>.evals._helpers`) instead of
 > a bare `_helpers` key in `sys.modules`. Several skills' eval dirs are
-> therefore collected in **one** pytest session, and the `Makefile`'s `eval`
-> target fans them out across pytest-xdist workers (`--dist loadscope`, one
-> worker per skill) to run in parallel.
+> therefore collected in **one** pytest session, and binom-eval's built-in
+> concurrency (`--live-eval-concurrency`) runs their `claude -p` trials in
+> parallel under a single shared cap.
 
 ## Step by step
 
@@ -313,18 +313,27 @@ make test-unit             # fast unit tests for all skills, no API calls
 make eval                  # every skill's claude evals, in parallel (target 3/5, <=21 runs)
 make eval-<skill-name>     # one skill's claude evals
 make eval TARGET_RATE=0.8 MAX_TRIALS=12
-make eval JOBS=2           # cap the xdist worker count
+make eval CONCURRENCY=2    # cap in-flight `claude -p` calls (default 5)
+make eval ISOLATE=0        # run in the live tree (no per-trial copy)
 ```
 
-`make eval` runs the skills concurrently via pytest-xdist (`--dist loadscope`,
-one worker per skill); `JOBS` (default `auto`) caps the workers. Effective
-parallelism is `min(JOBS, #skills)`, so worst-case in-flight `claude -p` calls
-is roughly that many workers times the adaptive batch size — lower `JOBS` if
-you need to stay under an API rate limit.
+`make eval` runs every skill's trials concurrently under binom-eval's built-in
+parallelism: one shared in-process semaphore (`--live-eval-concurrency`,
+default 5) bounds total in-flight `claude -p` calls across the whole session.
+Lower `CONCURRENCY` to stay under an API rate limit, or set it to `1` to run
+fully serially. Per binom-eval's README, do **not** add pytest-xdist (`-n`) on
+top: each worker would get its own semaphore (total calls = workers ×
+concurrency) and recompute the session-scoped fixture.
 
-Or call pytest directly. Several skills' eval dirs can be collected in one
-session, but to add xdist yourself pass `-n <N> --dist loadscope`. The
-`live_eval` marker is the unit/eval split:
+Each trial runs against a throwaway copy of the repo root
+(`--live-eval-isolate`, on by default — `ISOLATE=0` to opt out). The runner
+drives `claude -p --dangerously-skip-permissions` against prompts that ask it
+to edit the sample files, so without isolation concurrent trials would clobber
+one another and mutate the committed fixtures.
+
+Or call pytest directly. Several skills' eval dirs are collected in one
+session and parallelised by the built-in semaphore. The `live_eval` marker is
+the unit/eval split:
 
 ```sh
 # fast unit tests for a skill (excludes the live_eval tests)

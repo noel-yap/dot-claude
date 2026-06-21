@@ -6,12 +6,11 @@
 # registers that plugin via its `pytest11` entry point, so no conftest sys.path
 # wiring is needed for the eval machinery.
 #
+# Eval parallelism is built into binom-eval: a single in-process semaphore
+# (`--live-eval-concurrency`) caps total in-flight `claude -p` calls across the
+# whole session. binom-eval's README advises against layering pytest-xdist
+# (`-n`) on top -- each worker would get its own semaphore and recompute the
+# session-scoped fixture -- so this suite no longer depends on it.
+#
 # Pinned to a git tag for reproducibility. Bump the tag to upgrade.
-binom-eval @ git+https://github.com/noel-yap/binom-eval@v0.1.0
-
-# pytest-xdist distributes the eval tests across worker processes. With
-# `--dist loadscope` each skill's `TestClaudeEvals` class is one scope, so the
-# skills run in parallel (one worker each) while every skill's session-scoped
-# `eval_runs` fixture is still built exactly once on its own worker. See the
-# `eval` target in the Makefile.
-pytest-xdist==3.8.0
+binom-eval @ git+https://github.com/noel-yap/binom-eval@v0.2.0
