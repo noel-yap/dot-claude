@@ -10,6 +10,5 @@
       "Bash(ls *)",
       "Bash(pwd)"
     ]
-  },
-  "model": "opus"
+  }
 }
