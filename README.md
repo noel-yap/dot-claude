@@ -21,6 +21,20 @@ Analyzes staged changes and creates a [Conventional Commits](https://www.convent
 - Updates `README.md` when the change affects UX, and stages it automatically
 - Shows a summary of staged/unstaged/untracked files and confirms before committing
 
+### `/release`
+
+Determines the next [semantic version](https://semver.org) from the Conventional Commits since the last release tag, creates an annotated tag, and pushes it.
+
+```
+/release [major|minor|patch|<explicit-version>]
+```
+
+- Infers the bump from commits since the last tag, or accepts a forced level / explicit version
+- Preflights a clean working tree and in-sync upstream before tagging
+- Drafts grouped release notes (Features, Fixes, Performance, Other) as the annotated tag message
+- Confirms the version bump, target branch/remote, and notes before tagging and pushing
+- Uses annotated tags only — never force-pushes or moves existing tags
+
 ### `/unit-test`
 
 Generates unit tests for functions in the specified source files.
