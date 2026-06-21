@@ -10,6 +10,12 @@ allowed-tools:
   - "Bash(git fetch:*)"
   - "Bash(git push:*)"
   - "Bash(git config:*)"
+  - "Bash(git add:*)"
+  - "Bash(git commit:*)"
+  - "Read"
+  - "Edit"
+  - "Grep"
+  - "Glob"
 ---
 # /release Command
 
@@ -48,22 +54,30 @@ Determines the next [semantic version](https://semver.org) from the Conventional
    - `patch`: only `fix`, `perf`, or other non-feature changes (`refactor`, `docs`, `chore`, etc.) with no `feat` and no breaking change.
    - If there are only `chore`/`docs`/`style`/`test`/`ci` commits and no `fix`/`feat`, tell the user the change set looks non-releasable and ask whether to proceed with a `patch` bump anyway.
 5. **Compute the next version** by applying the bump to the current version (reset lower components: a `minor` bump zeroes `patch`; a `major` bump zeroes `minor` and `patch`). Reapply the prefix convention from step 3.
-6. **Draft release notes.** Group the commits since the last tag by type (Features, Fixes, Performance, Other) into a short changelog.
-7. **Confirm.** Show the user:
+6. **Sync the project's version manifest.** Many projects hardcode the version in a manifest, and their release/publish CI fails if the Git tag and that version disagree — so the manifest must be bumped *before* the tag is created, and the tag must point at the bump commit.
+   - **Detect the manifest.** Look (in the repo root, then obvious subdirs) for a static version declaration in, e.g.: `pyproject.toml` (`[project] version` or `[tool.poetry] version`), `package.json` (`"version"`), `Cargo.toml` (`[package] version`), `setup.cfg` / `setup.py`, `*.gemspec`, `build.gradle(.kts)`, `pom.xml`, a plain `VERSION` file, or a `__version__` in the package's `__init__.py`. Use Grep/Glob to find it; don't assume one ecosystem.
+   - **If the version is derived from the Git tag** (dynamic / VCS versioning — e.g. `dynamic = ["version"]` with `hatch-vcs`/`setuptools-scm`, `[tool.hatch.version] source = "vcs"`, `versioningit`, `setuptools_scm`, etc.): do **not** edit anything — the tag itself is the source of truth. Note this to the user and skip to step 7.
+   - **If a static version is found:** edit just that field to the computed version (strip the `v` prefix for the manifest value, even if tags use it), leaving the rest of the file untouched. If more than one manifest carries the version, update all of them. If none is found, note it and skip.
+   - Do not stage or commit yet — step 9 does that as part of confirmed execution.
+7. **Draft release notes.** Group the commits since the last tag by type (Features, Fixes, Performance, Other) into a short changelog.
+8. **Confirm.** Show the user:
    - Current version → next version, and the reason for the chosen bump.
+   - Which manifest file(s) will be bumped (or that versioning is tag-derived / no manifest was found, so no bump commit is needed).
    - The branch the tag will point at and the remote it will be pushed to.
    - The drafted release notes that will become the annotated tag message.
    Then ask the user to confirm before proceeding.
-8. **Tag.** On confirmation, create an annotated tag at `HEAD`:
+9. **Commit the version bump (if any).** On confirmation, if step 6 edited a manifest, stage exactly those file(s) and commit them as `chore(release): bump version to <version-without-prefix>` (no other changes in this commit). This commit becomes the tag target so the tagged tree carries the matching version. If nothing was edited, skip.
+10. **Tag.** Create an annotated tag at `HEAD` (which is now the bump commit, if one was made):
    `git tag -a <version> -m "<release notes>"`
-9. **Push.** Push the branch and the tag:
-   - `git push` (the branch, if it has unpushed commits)
+11. **Push.** Push the branch and the tag:
+   - `git push` (the branch — required if a bump commit was made or there are other unpushed commits)
    - `git push origin <version>` (the tag)
-10. **Report** the created tag, the commit it points at, and the remote it was pushed to. If the remote is GitHub and the user wants a GitHub Release, mention they can run `gh release create <version>` (only run it if they ask).
+12. **Report** the created tag, the commit it points at, the manifest bump (if any), and the remote it was pushed to. If the remote is GitHub: tag-triggered release workflows publish on their own, so check for one (`.github/workflows`) before suggesting anything manual. If there's no release workflow and the user wants a GitHub Release, mention they can run `gh release create <version>` (only run it if they ask).
 
 ## Constraints
 - Never create or move a tag that already exists — if the computed version tag exists, stop and report.
 - Never use `git push --force` or `git tag -f`.
 - Use annotated tags (`-a`), not lightweight tags.
-- Tag only a clean working tree at a commit that exists on the remote-tracked branch.
-- No Claude co-authorship footer in the tag message.
+- Tag only a clean working tree. The tag target must be on the remote-tracked branch — the one exception is a `chore(release)` version-bump commit created in this run, which step 11 pushes immediately after tagging.
+- The version-bump commit (step 9) must contain only the manifest version change — never fold other staged work into it.
+- No Claude co-authorship footer in the tag or commit messages.
