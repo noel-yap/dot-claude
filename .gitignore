@@ -20,6 +20,9 @@ stats-cache.json
 tasks/
 telemetry/
 
+# macOS
+.DS_Store
+
 # IDEA
 .idea/
 
