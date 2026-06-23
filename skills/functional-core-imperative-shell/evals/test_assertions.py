@@ -20,7 +20,7 @@ from ._assertions import (
     assert_pure_core_no_io,
     assert_skill_not_invoked,
 )
-from ._helpers import EvalRun
+from binom_eval import EvalRun
 
 
 class TestCodeBlocks:

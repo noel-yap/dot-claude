@@ -51,9 +51,10 @@ automatically by the installed `binom-eval` package (a pytest plugin via its
 across the whole tree with no conftest wiring. **A new skill never touches the
 `binom_eval` package** — it only adds files under its own `evals/`.
 
-The one entry point a skill calls directly is **`make_eval_runs_fixture`**,
-which builds the session-scoped `eval_runs` fixture that runs claude for
-every eval and returns `{eval_id: [EvalRun, ...]}`.
+The one entry points a skill calls directly are **`bind_eval_runs_fixture`**
+(in `conftest.py`) and **`register_live_eval_tests`** (in `test_evals.py`).
+Together they wire the session-scoped `eval_runs` fixture and register the
+standard live-eval pytest nodes — no hand-written test class needed.
 
 ## Directory layout for a new skill
 
@@ -63,29 +64,27 @@ skills/<skill-name>/
     ├── evals.json        # the eval cases + per-eval assertion ids
     ├── samples/          # input files the prompts point at
     │   └── *.ts
-    ├── _helpers.py       # binds SKILL_NAME + paths, re-exports from binom_eval
     ├── _assertions.py    # assertion functions + ASSERTION_HANDLERS registry
     ├── conftest.py       # wires the `eval_runs` fixture
     ├── test_evals.py     # the live evals (marked `live_eval`; run via -m live_eval)
-    ├── test_assertions.py# unit tests for _assertions.py (fast, deterministic)
-    └── test_helpers.py   # unit tests for the SKILL_NAME-bound wrappers
+    └── test_assertions.py# unit tests for _assertions.py (fast, deterministic)
 ```
 
-> **Note:** every skill's `evals/` reuses the module names `_helpers` and
-> `_assertions`. They no longer collide: `skills/pytest.ini` sets
-> `--import-mode=importlib` with `consider_namespace_packages = true`, and the
-> sibling imports are relative (`from ._helpers import ...`), so pytest names
-> each skill's modules by their full path (`<skill>.evals._helpers`) instead of
-> a bare `_helpers` key in `sys.modules`. Several skills' eval dirs are
-> therefore collected in **one** pytest session, and binom-eval's built-in
-> concurrency (`--live-eval-concurrency`) runs their `claude -p` trials in
-> parallel under a single shared cap.
+> **Note:** every skill's `evals/` reuses the module name `_assertions`. They
+> no longer collide: `skills/pytest.ini` sets `--import-mode=importlib` with
+> `consider_namespace_packages = true`, and the sibling imports are relative
+> (`from ._assertions import ...`), so pytest names each skill's modules by
+> their full path (`<skill>.evals._assertions`) instead of a bare
+> `_assertions` key in `sys.modules`. Several skills' eval dirs are therefore
+> collected in **one** pytest session, and binom-eval's built-in concurrency
+> (`--live-eval-concurrency`) runs their `claude -p` trials in parallel under
+> a single shared cap.
 
 ## Step by step
 
 ### 1. `evals.json` — the cases
 
-The skill identity is derived from the directory name (see `_helpers.py`
+The skill identity is derived from the directory name (see `conftest.py`
 below), so `evals.json` holds only the cases:
 
 ```json
@@ -114,63 +113,18 @@ below), so `evals.json` holds only the cases:
   `expected_output` is documentation only.
 - Put the input files the prompt references under `samples/`.
 
-### 2. `_helpers.py` — bind the skill identity
+### 2. `_assertions.py` — the checks
 
-Copy this verbatim — nothing to edit. Both `REPO_ROOT` and the skill identity
-(`SKILL_NAME`) are derived from this file's location (`evals/` is 3 levels
-below the repo root, and its parent dir is the skill).
-
-```python
-"""Skill-specific bindings over the shared eval helpers."""
-from __future__ import annotations
-
-from pathlib import Path
-from typing import Any
-
-from binom_eval import (
-    EvalRun,
-    assert_eval_passed,
-    failing_assertions,
-    parse_stream_json as _parse_stream_json,
-    trial_outcomes,
-    trigger_pass_counts,
-)
-from binom_eval import _is_skill_hit as _shared_is_skill_hit
-
-EVAL_DIR = Path(__file__).resolve().parent
-REPO_ROOT = EVAL_DIR.parents[3]
-EVALS_PATH = EVAL_DIR / "evals.json"
-SKILL_NAME = EVAL_DIR.parent.name      # the skill dir is the source of truth
-
-
-def parse_stream_json(stdout: str) -> tuple[bool, str, list[dict[str, Any]]]:
-    return _parse_stream_json(stdout, SKILL_NAME)
-
-
-def _is_skill_hit(block: dict[str, Any]) -> bool:
-    return _shared_is_skill_hit(block, SKILL_NAME)
-
-
-__all__ = [
-    "EvalRun", "EVAL_DIR", "EVALS_PATH", "REPO_ROOT", "SKILL_NAME",
-    "_is_skill_hit", "assert_eval_passed", "failing_assertions",
-    "parse_stream_json", "trial_outcomes", "trigger_pass_counts",
-]
-```
-
-### 3. `_assertions.py` — the checks
-
-Each handler takes a `EvalRun` and **raises `AssertionError`** on failure
-(its message becomes the per-trial failure detail). Register every handler in
-an `ASSERTION_HANDLERS` dict keyed by the `assertion.id` from `evals.json`.
-Use `code_blocks`, `first_line`, and `missing_from` from `binom_eval` for
-text wrangling.
+Each handler takes an `EvalRun` (from `binom_eval`) and **raises
+`AssertionError`** on failure (its message becomes the per-trial failure
+detail). Register every handler in an `ASSERTION_HANDLERS` dict keyed by the
+`assertion.id` from `evals.json`. Use `code_blocks`, `first_line`, and
+`missing_from` from `binom_eval` for text wrangling.
 
 ```python
 from __future__ import annotations
 
-from ._helpers import EvalRun
-from binom_eval import code_blocks, missing_from
+from binom_eval import EvalRun, code_blocks, missing_from
 
 
 def assert_does_the_thing(run: EvalRun) -> None:
@@ -190,107 +144,71 @@ ASSERTION_HANDLERS = {
 }
 ```
 
-### 4. `conftest.py` — wire the fixture
+### 3. `conftest.py` — wire the fixture
 
 Identical for every skill except the imports resolve to this skill's modules.
 Sibling modules are imported relatively (`from ._assertions import ...`);
 paired with `consider_namespace_packages` in `skills/pytest.ini` this keeps
-each skill's `_helpers` / `_assertions` namespaced, so several skills'
-eval dirs can be collected in one pytest session without colliding.
+each skill's `_assertions` namespaced, so several skills' eval dirs can be
+collected in one pytest session without colliding.
 
 ```python
 from __future__ import annotations
 
-from ._assertions import ASSERTION_HANDLERS
-from ._helpers import EVALS_PATH, REPO_ROOT, SKILL_NAME
-from binom_eval import make_eval_runs_fixture
+from pathlib import Path
 
-eval_runs = make_eval_runs_fixture(
-    EVALS_PATH, REPO_ROOT, SKILL_NAME, ASSERTION_HANDLERS
+from binom_eval import bind_eval_runs_fixture
+
+from ._assertions import ASSERTION_HANDLERS
+
+EVAL_DIR = Path(__file__).resolve().parent
+SKILL_NAME = EVAL_DIR.parent.name
+
+eval_runs = bind_eval_runs_fixture(
+    EVAL_DIR,
+    SKILL_NAME,
+    ASSERTION_HANDLERS,
+    repo_root=EVAL_DIR.parents[3],   # omit when prompts run in EVAL_DIR only
 )
 ```
 
-`make_eval_runs_fixture` returns a session-scoped fixture. For each eval it
+`bind_eval_runs_fixture` returns a session-scoped fixture. For each eval it
 runs `run_eval_adaptive`, which fires trials in concurrent batches and stops
 as soon as the posterior locks PASS or FAIL, yielding
 `{eval_id: [EvalRun, ...]}`.
 
-### 5. `test_evals.py` — the live evals
+### 4. `test_evals.py` — the live evals
 
-Two tests, both marked `live_eval` (so the unit targets exclude them via
-`-m "not live_eval"` and the eval targets select them via `-m live_eval`).
-The target pass rate comes from the `live_eval_target_rate` fixture
-(provided by the `binom-eval` plugin).
+One call registers the standard live-eval pytest nodes (all marked
+`live_eval`, so unit targets exclude them via `-m "not live_eval"` and eval
+targets select them via `-m live_eval`). The target pass rate comes from the
+`live_eval_target_rate` fixture (provided by the `binom-eval` plugin).
 
 ```python
 from __future__ import annotations
 
-import json
+from pathlib import Path
 
-import pytest
+from binom_eval import register_live_eval_tests
 
 from ._assertions import ASSERTION_HANDLERS
-from ._helpers import (
-    EVALS_PATH, EvalRun, assert_eval_passed, failing_assertions,
-    trial_outcomes, trigger_pass_counts,
+
+EVAL_DIR = Path(__file__).resolve().parent
+
+register_live_eval_tests(
+    globals(),
+    evals_path=EVAL_DIR / "evals.json",
+    handlers=ASSERTION_HANDLERS,
+    subject_name=EVAL_DIR.parent.name,
+    trigger="skill",               # or "agent" for agent suites
 )
-
-
-class TestClaudeEvals:
-    @staticmethod
-    def _evals() -> list[dict]:
-        return json.loads(EVALS_PATH.read_text(encoding="utf-8"))["evals"]
-
-    @staticmethod
-    def _assertion_params(evals: list[dict]) -> list[pytest.param]:
-        return [
-            pytest.param(ev["id"], a["id"], id=f"{ev['id']}::{a['id']}")
-            for ev in evals
-            for a in ev["assertions"]
-        ]
-
-    @pytest.mark.live_eval
-    @pytest.mark.parametrize("eval_id,assertion_id", _assertion_params(_evals()))
-    def test_eval_assertion(
-        self,
-        eval_runs: dict[str, list[EvalRun]],
-        live_eval_target_rate: float,
-        eval_id: str,
-        assertion_id: str,
-    ) -> None:
-        # eval_runs is built before this body runs, and that build validates
-        # handler coverage -- so assertion_id always has a registered handler.
-        handler = ASSERTION_HANDLERS[assertion_id]
-        outcomes = trial_outcomes(eval_runs[eval_id], handler)
-        assert_eval_passed(outcomes, live_eval_target_rate, f"{eval_id}::{assertion_id}")
-
-    @pytest.mark.live_eval
-    def test_should_trigger_evals_invoked_skill(
-        self,
-        eval_runs: dict[str, list[EvalRun]],
-        live_eval_target_rate: float,
-    ) -> None:
-        from binom_eval import eval_passed
-
-        counts = trigger_pass_counts(eval_runs, self._evals())
-        failures = [
-            c for c in counts if not eval_passed(c[1], c[2], live_eval_target_rate)
-        ]
-        assert not failures, (
-            "skill invoked below the bar "
-            f"(P(rate >= {live_eval_target_rate:.3f}) must be >= 0.5): "
-            + ", ".join(f"{eid}: {n}/{total}" for eid, n, total in failures)
-        )
 ```
 
-### 6. Unit tests (fast, no API)
+### 5. Unit tests (fast, no API)
 
 - **`test_assertions.py`** — exercise each assertion handler against
   hand-written `EvalRun(assistant_text=...)` fixtures covering pass and
   fail cases. This is where the *deterministic* coverage lives.
-- **`test_helpers.py`** — verify your `_helpers.py` wrappers bind the right
-  `SKILL_NAME` (the shared functions are already tested in the binom-eval
-  package's own suite, so don't re-test them).
 
 ## How grading works
 
@@ -348,14 +266,13 @@ python3 -m pytest skills/<skill-name>/evals -m live_eval \
 ```
 
 With `-m "not live_eval"` the live evals are excluded, so the unit tests
-(`test_assertions.py`, `test_helpers.py`) run fast and offline.
+(`test_assertions.py`) run fast and offline.
 
 ## Checklist for a new skill
 
 1. `evals/evals.json` with cases + assertion ids (and `samples/`).
-2. `_helpers.py` with `SKILL_NAME` set.
-3. `_assertions.py` with one handler per assertion id + `ASSERTION_HANDLERS`.
-4. `conftest.py` calling `make_eval_runs_fixture`.
-5. `test_evals.py` (the two live tests above).
-6. `test_assertions.py` + `test_helpers.py` (deterministic unit coverage).
-7. `make eval-<skill-name>` passes; `make` (unit) stays green.
+2. `_assertions.py` with one handler per assertion id + `ASSERTION_HANDLERS`.
+3. `conftest.py` calling `bind_eval_runs_fixture`.
+4. `test_evals.py` calling `register_live_eval_tests`.
+5. `test_assertions.py` (deterministic unit coverage).
+6. `make eval-<skill-name>` passes; `make` (unit) stays green.

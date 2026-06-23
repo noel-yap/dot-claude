@@ -32,101 +32,18 @@ with ``-m "not live_eval"``.
 
 from __future__ import annotations
 
-import json
+from pathlib import Path
 
-import pytest
+from binom_eval import register_live_eval_tests
+
 from ._assertions import ASSERTION_HANDLERS
-from ._helpers import (
-    EVALS_PATH,
-    EvalRun,
-    assert_eval_passed,
-    failing_assertions,
-    trial_outcomes,
-    trigger_pass_counts,
+
+EVAL_DIR = Path(__file__).resolve().parent
+
+register_live_eval_tests(
+    globals(),
+    evals_path=EVAL_DIR / "evals.json",
+    handlers=ASSERTION_HANDLERS,
+    subject_name=EVAL_DIR.parent.name,
+    trigger="skill",
 )
-from binom_eval import eval_passed
-
-
-class TestClaudeEvals:
-    @staticmethod
-    def _evals() -> list[dict]:
-        """Load all eval entries from evals.json."""
-        return json.loads(EVALS_PATH.read_text(encoding="utf-8"))["evals"]
-
-    @staticmethod
-    def _assertion_params(evals: list[dict]) -> list[pytest.param]:
-        """Build a pytest.param per (eval_id, assertion_id) in evals.json."""
-        return [
-            pytest.param(ev["id"], ass["id"], id=f"{ev['id']}::{ass['id']}")
-            for ev in evals
-            for ass in ev["assertions"]
-        ]
-
-    @pytest.mark.live_eval
-    @pytest.mark.parametrize(
-        "eval_id,assertion_id", _assertion_params(_evals())
-    )
-    def test_eval_assertion(
-        self,
-        eval_runs: dict[str, list[EvalRun]],
-        live_eval_target_rate: float,
-        eval_id: str,
-        assertion_id: str,
-    ) -> None:
-        # Requesting eval_runs builds the fixture first, and that build runs
-        # load-time handler-coverage validation -- so every assertion_id here
-        # is guaranteed to have a registered handler.
-        handler = ASSERTION_HANDLERS[assertion_id]
-        outcomes = trial_outcomes(eval_runs[eval_id], handler)
-        assert_eval_passed(
-            outcomes, live_eval_target_rate, f"{eval_id}::{assertion_id}"
-        )
-
-    @pytest.mark.live_eval
-    @pytest.mark.parametrize("eval_id", [ev["id"] for ev in _evals()])
-    def test_eval_expectation(
-        self,
-        eval_runs: dict[str, list[EvalRun]],
-        live_eval_target_rate: float,
-        eval_id: str,
-    ) -> None:
-        """Per-eval rollup: when any of this eval's assertions failed the
-        posterior bar, fail once with the eval's `expected_output` as the
-        human-level intent, alongside which assertions fell short.
-
-        The per-assertion `test_eval_assertion` nodes still report exactly
-        which assertion regressed and why; this node adds the expected-outcome
-        context once per eval instead of repeating it on every assertion.
-        """
-        ev = next(e for e in self._evals() if e["id"] == eval_id)
-        runs = eval_runs[eval_id]
-        failing = failing_assertions(
-            runs, ev["assertions"], ASSERTION_HANDLERS, live_eval_target_rate
-        )
-        assert not failing, (
-            f"{eval_id}: {len(failing)} assertion(s) below the bar "
-            f"(P(rate >= {live_eval_target_rate:.3f}) must be >= 0.5):\n"
-            + "\n".join(
-                f"  - {aid}: {n}/{total} passed, p_good={p:.3f}"
-                for aid, n, total, p in failing
-            )
-            + f"\n\nExpected outcome:\n  {ev['expected_output']}"
-        )
-
-    @pytest.mark.live_eval
-    def test_should_trigger_evals_invoked_skill(
-        self,
-        eval_runs: dict[str, list[EvalRun]],
-        live_eval_target_rate: float,
-    ) -> None:
-        counts = trigger_pass_counts(eval_runs, self._evals())
-        failures = [
-            (eid, n, total)
-            for eid, n, total in counts
-            if not eval_passed(n, total, live_eval_target_rate)
-        ]
-        assert not failures, (
-            f"FCIS skill invoked below the bar "
-            f"(P(rate >= {live_eval_target_rate:.3f}) must be >= 0.5): "
-            + ", ".join(f"{eid}: {n}/{total}" for eid, n, total in failures)
-        )

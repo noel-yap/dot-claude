@@ -5,9 +5,8 @@ from __future__ import annotations
 import itertools
 import re
 
-from ._helpers import EvalRun
-
 from binom_eval import (
+    EvalRun,
     code_blocks as _code_blocks,
     first_line as _first_line,
 )

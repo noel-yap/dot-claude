@@ -25,18 +25,25 @@ Deterministic checks belong in the per-skill unit suites, not here.
 
 Multiple skills' eval dirs can be collected in one pytest session: each
 `evals` dir is a namespace package (no `__init__.py`) and its sibling
-modules are imported relatively (`from ._helpers import ...`), so
-`_helpers` / `_assertions` are namespaced per skill rather than colliding
-in `sys.modules`. See `skills/pytest.ini` (`consider_namespace_packages`).
+modules are imported relatively (`from ._assertions import ...`), so
+`_assertions` is namespaced per skill rather than colliding in `sys.modules`.
+See `skills/pytest.ini` (`consider_namespace_packages`).
 """
 
 from __future__ import annotations
 
+from pathlib import Path
+
+from binom_eval import bind_eval_runs_fixture
+
 from ._assertions import ASSERTION_HANDLERS
-from ._helpers import EVALS_PATH, REPO_ROOT, SKILL_NAME
 
-from binom_eval import make_eval_runs_fixture
+EVAL_DIR = Path(__file__).resolve().parent
+SKILL_NAME = EVAL_DIR.parent.name
 
-eval_runs = make_eval_runs_fixture(
-    EVALS_PATH, REPO_ROOT, SKILL_NAME, ASSERTION_HANDLERS
+eval_runs = bind_eval_runs_fixture(
+    EVAL_DIR,
+    SKILL_NAME,
+    ASSERTION_HANDLERS,
+    repo_root=EVAL_DIR.parents[3],
 )

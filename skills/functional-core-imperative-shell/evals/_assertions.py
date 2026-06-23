@@ -5,9 +5,8 @@ from __future__ import annotations
 import itertools
 import re
 
-from ._helpers import EvalRun
-
 from binom_eval import (
+    EvalRun,
     ARROW_FN_RE,
     NAMED_FN_RE,
     code_blocks as _code_blocks,

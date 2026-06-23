@@ -6,7 +6,7 @@
 # or above --live-eval-target-rate, over at most --live-eval-max-trials runs).
 # The two are split by the `live_eval` marker: unit targets select
 # `-m "not live_eval"`, eval targets select `-m live_eval`. The per-skill
-# eval dirs reuse the module names _helpers / _assertions but no longer
+# eval dirs reuse the module name _assertions but no longer
 # collide: each evals dir is a namespace package whose siblings import
 # relatively (see skills/pytest.ini), so every target collects all skills in
 # one pytest session. Evals run in parallel via binom-eval's built-in

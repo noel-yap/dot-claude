@@ -31,7 +31,7 @@ from ._assertions import (
     assert_sut_has_no_bare_globals,
     assert_sut_has_no_bare_module_refs,
 )
-from ._helpers import EvalRun
+from binom_eval import EvalRun
 
 
 def _run(text: str, skill_invoked: bool = False) -> EvalRun:
